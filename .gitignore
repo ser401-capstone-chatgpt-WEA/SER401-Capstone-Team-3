@@ -1,0 +1,12 @@
+# VS Code
+.vscode/
+
+# Compilation files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data output
+*.log
+*.csv
+
