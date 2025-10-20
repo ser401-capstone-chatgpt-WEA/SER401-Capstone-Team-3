@@ -1,3 +1,4 @@
+from alert_compare import compare_alerts, load_latest_alert_json, print_alert_diff
 import time
 from playwright.sync_api import sync_playwright
 import pandas as pd
@@ -5,6 +6,7 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import re
+import json
 
 # Setup basic logging to track progress and errors
 logging.basicConfig(filename='pbs_warn_scraper.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -273,6 +275,9 @@ def test_fetch_alert_list():
     except Exception as e:
         logging.error(f"Failed saving alerts JSON: {e}")
         print(f"Failed saving alerts JSON: {e}")
+
+    # compare with previous alerts if available (using alert_compare helpers)
+    compare_and_report_alerts("./pbs_warn_outputs", html)
 
 def main():
     """
