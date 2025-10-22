@@ -3,6 +3,30 @@ import json
 from pathlib import Path
 
 
+# --- reporting and printing logic ---
+def print_alert_diff(alert_diff):
+    # print a summary of new, updated, and cleared alerts
+    print(f"new alerts: {len(alert_diff['new'])}")
+    for alert in alert_diff['new']:
+        print(f"  [NEW] {alert['title']} from {alert['sender']}")
+    print(f"updated alerts: {len(alert_diff['updated'])}")
+    for updated in alert_diff['updated']:
+        print(f"  [UPDATED] {updated['new']['title']} from {updated['new']['sender']}")
+    print(f"cleared alerts: {len(alert_diff['cleared'])}")
+    for cleared in alert_diff['cleared']:
+        print(f"  [CLEARED] {cleared['title']} from {cleared['sender']}")
+
+def compare_and_report_alerts(output_folder, current_alert_list):
+    # loads the latest previous alert json from output_folder, compares to current_alert_list, and prints the diff
+    previous_alert_list = load_latest_alert_json(output_folder)  # get previous alerts if any
+    if previous_alert_list:
+        print("\n--- comparing to previous alerts ---")
+        alert_diff = compare_alerts(previous_alert_list, current_alert_list)  # run comparison
+        print_alert_diff(alert_diff)  # print results
+    else:
+        print("no previous alert file found for comparison.")
+
+
 # --- alert comparison logic ---
 def compare_alerts(previous_alert_list, current_alert_list):
     # compare two lists of alert dicts and classify alerts as new, updated, or cleared
@@ -42,11 +66,15 @@ def compare_alerts(previous_alert_list, current_alert_list):
     return {'new': new_alerts, 'updated': updated_alerts, 'cleared': cleared_alerts}
 
 def load_latest_alert_json(output_folder):
-    # find and load the most recent alert json file from the output folder
-    # returns a list of alert dicts, or [] if none found
+    # find and load the second most recent alert json file from the output folder
+    # returns a list of alert dicts, or just [] if none found
     output_folder = Path(output_folder)
     json_files = sorted(output_folder.glob("pbs_warn_alerts_*.json"), reverse=True)
-    for alert_file in json_files:
+    if len(json_files) < 2:
+        # not enough files to compare
+        return []
+    # the most recent file is assumed to be the current run, so we skip it
+    for alert_file in json_files[1:]:
         try:
             with open(alert_file, "r", encoding="utf-8") as fh:
                 # try to load and return the first valid json file

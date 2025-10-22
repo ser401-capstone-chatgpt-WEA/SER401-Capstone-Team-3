@@ -1,4 +1,4 @@
-from alert_compare import compare_alerts, load_latest_alert_json, print_alert_diff
+from alert_compare import compare_alerts, load_latest_alert_json, print_alert_diff, compare_and_report_alerts
 import time
 from playwright.sync_api import sync_playwright
 import pandas as pd
