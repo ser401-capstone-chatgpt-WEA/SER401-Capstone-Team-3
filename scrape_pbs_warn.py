@@ -123,7 +123,7 @@ def extract_alerts_from_card_list(page):
     """
     Extract alerts under the '#card-alerts-list' container into a list of dicts.
     Returns: 
-        [{ "title", "message", "sender", "expires", "severity_color", "raw_html" }, ...]
+        [{ "title", "message", "sender", "expires", "area", "id", "wea360", "wea90", "severity_color", "raw_html" }, ...]
     Uses a page.evaluate JS snippet to be tolerant of changing class names.
     """
     try:
@@ -185,6 +185,8 @@ def extract_alerts_from_card_list(page):
 def fetch_pbs_warn_alert_list():
     """
     Opens PBS WARN, clicks the alerts menu, extracts alerts and returns a list of dicts. 
+    Returns: 
+        [{ "title", "message", "sender", "expires", "severity_color", "raw_html" }, ...]
     """
     url = "https://warn.pbs.org/"
     headers = {"User-Agent": "Mozilla/5.0 (compatible; EmergencyMLScraper/0.1)"}
@@ -214,6 +216,295 @@ def fetch_pbs_warn_alert_list():
             return alerts
     except Exception as e:
         logging.error(f"Error fetching alert list: {e}")
+        return []
+
+def fetch_pbs_warn_alerts_with_details():
+    """
+    Navigate to PBS WARN, open alerts, click each alert card to expand details,
+    extract structured fields for each alert, save to a timestamped JSON file,
+    and return the list of alert dicts.
+    Returns:
+        [{ "title", "message", "sender", "expires", "severity_color]
+    """
+    url = "https://warn.pbs.org/"
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; EmergencyMLScraper/0.1)"}
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            page = browser.new_page()
+            page.set_extra_http_headers(headers)
+            page.goto(url, wait_until="networkidle", timeout=30000)
+
+            # Forward browser console messages to our log for debugging timing/scope issues
+            try:
+                page.on("console", lambda msg: logging.info(f"[browser console] {msg.type}: {msg.text}"))
+            except Exception:
+                # best-effort; not critical
+                pass
+
+            # Try to capture site timestamp for filenames
+            timestamp_element = "_36XBCKh9PtUiaizdAv2d7t._3rGW2ARGcFG6V04zyupN-3"
+            timestamp_div = f"div.{timestamp_element}"
+            site_timestamp = None
+            try:
+                if page.query_selector(timestamp_div):
+                    site_timestamp = page.query_selector(timestamp_div).inner_text()
+            except Exception:
+                site_timestamp = None
+
+            # Open the alert menu
+            try:
+                open_alert_menu(page, timeout=5000)
+            except Exception:
+                pass
+            # Wait for the card list container to be present
+            try:
+                page.wait_for_selector("#card-alerts-list, div.infinite-scroll-component__outerdiv", timeout=5000)
+            except Exception:
+                pass
+
+            # Find candidate alert card elements
+            candidates = page.query_selector_all("div._3hppmX6GqLF_toD4XOvBXz")
+            if not candidates:
+                # fallback to container children
+                container = page.query_selector("#card-alerts-list") or page.query_selector("div.infinite-scroll-component__outerdiv")
+                if container:
+                    candidates = container.query_selector_all(":scope > *")
+
+            alerts = []
+            for el in candidates:
+                try:
+                    # Skip non-alert headers (e.g., 'Alert List' container)
+                    try:
+                        title_preview = el.evaluate("el => { const n = el.querySelector('div[style*=\"background-color\"]') || el.querySelector(':scope > div'); return n ? n.textContent.trim() : (el.textContent||'').trim(); }")
+                        if not title_preview:
+                            continue
+                        if 'alert list' in title_preview.lower() or 'active alerts' in title_preview.lower():
+                            continue
+                    except Exception:
+                        # if evaluation fails, continue with best-effort
+                        pass
+
+                    # Click the title node (preferred) to expand details, otherwise click the card
+                    try:
+                        title_node = el.query_selector("div[style*='background-color']") or el.query_selector(":scope > div")
+                        if title_node:
+                            try:
+                                title_node.click()
+                                # give the UI a bit more time to render expanded details
+                                page.wait_for_timeout(1000)
+                            except Exception:
+                                # fallback to clicking the card itself
+                                el.click()
+                                page.wait_for_timeout(1000)
+                        else:
+                            el.click()
+                            page.wait_for_timeout(1000)
+                    except Exception:
+                        # ignore click errors and attempt to extract anyway
+                        page.wait_for_timeout(400)
+
+                    # Extract details from the expanded detail panel (preferred).
+                    # Strategy: wait for a panel-like node, evaluate a JS extractor
+                    # against the page to read the full details, then fall back to
+                    # a scoped extractor evaluated on the card if needed. On repeated
+                    # failures we save debug artifacts (HTML/screenshot) for inspection.
+                    # Use a global search that prefers nodes containing 'SENDER'/'EXPIRES'.
+                    global_js = r"""
+                    () => {
+                        // Try to find an element that contains SENDER or EXPIRES and looks like a detail panel
+                        const candidate = Array.from(document.querySelectorAll('div')).find(d => /SENDER|EXPIRES/i.test(d.textContent || ''));
+                        const panel = candidate || document.querySelector('div._2kD36e8w0LlK3JPw_QHlKm') || document.body;
+                        if (!panel) return null;
+
+                        const titleNode = panel.querySelector('div[style*="background-color"]') || panel.querySelector('h1') || panel.querySelector('h2') || panel.querySelector(':scope > div');
+                        const title = titleNode ? titleNode.textContent.trim() : '';
+
+                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [], raw_html: panel.outerHTML };
+
+                        // label/value rows: try to find rows containing label-like text
+                        const rows = Array.from(panel.querySelectorAll('div')).filter(d => (d.querySelectorAll(':scope > div').length >= 2));
+                        rows.forEach(row => {
+                            const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                            if (cols.length >= 2) {
+                                const lab = cols[0].toUpperCase();
+                                const val = cols[1];
+                                if (lab === 'SENDER') out.sender = val;
+                                else if (lab === 'EXPIRES') out.expires = val;
+                                else if (lab === 'SENT') out.sent = val;
+                                else if (lab === 'AREA') out.area = val;
+                                else if (lab === 'ID') out.id = val;
+                                else if (/WEA\s*360CH/i.test(lab)) out.wea360 = val;
+                                else if (/WEA\s*90CH/i.test(lab)) out.wea90 = val;
+                            }
+                        });
+
+                        // fallback message: look for obvious message containers
+                        const msgCandidate = panel.querySelector('.LgcsbPsiL2uEI-nZqHF-e') || panel.querySelector('.message') || panel.querySelector('p');
+                        if (msgCandidate) out.message = msgCandidate.textContent.trim();
+
+                        // history items: parse list items into structured entries {tag, title, id, sent}
+                        out.history = Array.from(panel.querySelectorAll('.ant-list-items li')).map(li => {
+                            try {
+                                // title is usually the first ant-row > ant-col block
+                                const titleNode = li.querySelector('div.ant-row > div, div');
+                                const titleText = titleNode ? (titleNode.textContent||'').trim() : '';
+                                // subsequent rows often contain label/value pairs like ID / Sent
+                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
+                                let id = null, sent = null, tag = null;
+                                const tagSpan = li.querySelector('span._1iv5qxCNer7nWUpYxE49gV');
+                                if (tagSpan) tag = (tagSpan.textContent||'').trim();
+                                labelRows.forEach(r => {
+                                    const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                    if (cols.length === 2) {
+                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                        if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
+                                    } else if (cols.length === 4) {
+                                        // case where labels are side-by-side: [ID, Sent]
+                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                        if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                    }
+                                });
+                                return { tag: tag, title: titleText, id: id, sent: sent };
+                            } catch (e) { return null; }
+                        }).filter(Boolean);
+
+                        // severity color heuristics
+                        const titleEl = panel.querySelector('div[style*="background-color"]') || panel.querySelector('span[role="img"], svg');
+                        if (titleEl && titleEl.style && titleEl.style.backgroundColor) out.severity_color = titleEl.style.backgroundColor;
+                        else if (titleEl && titleEl.style && titleEl.style.color) out.severity_color = titleEl.style.color;
+
+                        return out;
+                    }
+                    """
+
+                    # Fallback JS that is scoped to a card element (older UI variants)
+                    scoped_js = r"""
+                    (el) => {
+                        const titleNode = el.querySelector('div[style*="background-color"]') || el.querySelector(':scope > div');
+                        const title = titleNode ? titleNode.textContent.trim() : '';
+                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [] };
+                        const rows = Array.from(el.querySelectorAll('div')).filter(d => (d.querySelectorAll(':scope > div').length >= 2));
+                        rows.forEach(row => {
+                            const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                            if (cols.length >= 2) {
+                                const lab = cols[0].toUpperCase();
+                                const val = cols[1];
+                                if (lab === 'SENDER') out.sender = val;
+                                else if (lab === 'EXPIRES') out.expires = val;
+                                else if (lab === 'SENT') out.sent = val;
+                                else if (lab === 'AREA') out.area = val;
+                                else if (lab === 'ID') out.id = val;
+                                else if (/WEA\s*360CH/i.test(lab)) out.wea360 = val;
+                                else if (/WEA\s*90CH/i.test(lab)) out.wea90 = val;
+                            }
+                        });
+                        const msgCandidate = el.querySelector('.LgcsbPsiL2uEI-nZqHF-e') || el.querySelector('.message') || el.querySelector('p');
+                        if (msgCandidate) out.message = msgCandidate.textContent.trim();
+                        out.history = Array.from(el.querySelectorAll('.ant-list-items li')).map(li => {
+                            try {
+                                const titleNode = li.querySelector('div.ant-row > div, div');
+                                const titleText = titleNode ? (titleNode.textContent||'').trim() : '';
+                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
+                                let id = null, sent = null, tag = null;
+                                const tagSpan = li.querySelector('span._1iv5qxCNer7nWUpYxE49gV');
+                                if (tagSpan) tag = (tagSpan.textContent||'').trim();
+                                labelRows.forEach(r => {
+                                    const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                    if (cols.length === 2) {
+                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                        if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
+                                    } else if (cols.length === 4) {
+                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                        if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                    }
+                                });
+                                return { tag: tag, title: titleText, id: id, sent: sent };
+                            } catch (e) { return null; }
+                        }).filter(Boolean);
+                        return out;
+                    }
+                    """
+
+                    details = None
+                    for attempt in range(4):
+                        try:
+                            # Wait briefly for a panel-like node to appear (SENDER/EXPIRES text)
+                            try:
+                                page.wait_for_function("() => Array.from(document.querySelectorAll('div')).some(d => /SENDER|EXPIRES/i.test(d.textContent || ''))", timeout=2000)
+                            except Exception:
+                                # not fatal; continue to evaluate
+                                pass
+                            details = page.evaluate(global_js)
+                        except Exception:
+                            details = None
+
+                        # If that didn't return useful fields, try a scoped eval against the card
+                        if not details or not (details.get('sender') or details.get('expires') or details.get('wea90')):
+                            try:
+                                details = el.evaluate(scoped_js)
+                            except Exception:
+                                details = details or None
+
+                        # If key fields found, break early
+                        if details and (details.get('sender') or details.get('expires') or details.get('wea90')):
+                            break
+
+                        # wait a bit (exponential backoff)
+                        page.wait_for_timeout(250 * (attempt + 1))
+
+                    # If still missing key data, dump the global panel HTML and take a screenshot for debugging
+                    if not details or not (details.get('sender') or details.get('expires') or details.get('wea90')):
+                        try:
+                            dump_ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            output_folder = Path('./pbs_warn_outputs')
+                            output_folder.mkdir(parents=True, exist_ok=True)
+                            # Save full page HTML for inspection
+                            page_html_file = output_folder / f'debug_page_{dump_ts}_{len(alerts)}.html'
+                            with open(page_html_file, 'w', encoding='utf-8') as fh:
+                                fh.write(page.content())
+                            # Save a screenshot (headful run will capture current viewport)
+                            screenshot_file = output_folder / f'debug_page_{dump_ts}_{len(alerts)}.png'
+                            try:
+                                page.screenshot(path=str(screenshot_file), full_page=True)
+                            except Exception:
+                                # try a viewport screenshot fallback
+                                try:
+                                    page.screenshot(path=str(screenshot_file))
+                                except Exception:
+                                    pass
+                            logging.info(f'Wrote debug HTML and screenshot to {page_html_file} / {screenshot_file}')
+                        except Exception:
+                            pass
+
+                    # Normalize the details dict to include expected keys
+                    if not isinstance(details, dict):
+                        details = {}
+                    expected_keys = ['title', 'message', 'sender', 'expires', 'sent', 'area', 'id', 'wea360', 'wea90', 'severity_color', 'raw_html', 'history']
+                    for k in expected_keys:
+                        if k not in details:
+                            details[k] = [] if k == 'history' else None
+
+                    alerts.append(details)
+                except Exception:
+                    continue
+
+            # Save alerts to JSON using site timestamp (fallback to utcnow if missing)
+            try:
+                ts_for_file = format_timestamp_for_filename(site_timestamp) if site_timestamp else datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+                output_folder = Path("./pbs_warn_outputs")
+                output_folder.mkdir(parents=True, exist_ok=True)
+                out_file = output_folder / f"pbs_warn_alerts_{ts_for_file}.json"
+                with open(out_file, "w", encoding="utf-8") as fh:
+                    json.dump(alerts, fh, ensure_ascii=False, indent=2)
+                logging.info(f"Saved {len(alerts)} detailed alerts to {out_file}")
+            except Exception as e:
+                logging.error(f"Failed saving detailed alerts JSON: {e}")
+
+            browser.close()
+            return alerts
+    except Exception as e:
+        logging.error(f"Error fetching detailed alert list: {e}")
         return []
 
 def test_fetch_homepage():
@@ -267,7 +558,6 @@ def test_fetch_alert_list():
         output_folder = Path("./pbs_warn_outputs")
         output_folder.mkdir(parents=True, exist_ok=True)
         out_file = output_folder / f"pbs_warn_alerts_{formatted_ts}.json"
-        import json
         with open(out_file, "w", encoding="utf-8") as fh:
             json.dump(html, fh, ensure_ascii=False, indent=2)
         logging.info(f"Saved {len(html)} alerts to {out_file}")
@@ -278,6 +568,24 @@ def test_fetch_alert_list():
 
     # compare with previous alerts if available (using alert_compare helpers)
     compare_and_report_alerts("./pbs_warn_outputs", html)
+
+def test_fetch_alerts_with_details():
+    logging.info("Starting PBS WARN detailed alert fetch")
+    alerts = fetch_pbs_warn_alerts_with_details()
+    print(f"Extracted {len(alerts)} detailed alerts from PBS WARN.")
+    for alert in alerts:
+        print(f"- Title: {alert['title']}")
+        print(f"  Message: {alert['message']}")
+        print(f"  Sender: {alert['sender']}")
+        print(f"  Expires: {alert['expires']}")
+        print(f"  Sent: {alert['sent']}")
+        print(f"  Area: {alert['area']}")
+        print(f"  ID: {alert['id']}")
+        print(f"  WEA 360CH: {alert['wea360']}")
+        print(f"  WEA 90CH: {alert['wea90']}")
+        print(f"  Severity Color: {alert['severity_color']}")
+        print(f"  History Items: {len(alert['history'])} entries")
+        print()
 
 def main():
     """
@@ -293,7 +601,11 @@ def main():
     # test_fetch_homepage()
 
     # Alert list extraction and saving to JSON
-    test_fetch_alert_list()
+    # test_fetch_alert_list()
+
+    # Alert list extraction with detailed fields and saving to JSON
+    test_fetch_alerts_with_details()
+    
     
 
 if __name__ == "__main__":
