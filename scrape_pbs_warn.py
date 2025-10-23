@@ -314,30 +314,60 @@ def fetch_pbs_warn_alerts_with_details():
                     () => {
                         // Try to find an element that contains SENDER or EXPIRES and looks like a detail panel
                         const candidate = Array.from(document.querySelectorAll('div')).find(d => /SENDER|EXPIRES/i.test(d.textContent || ''));
-                        const panel = candidate || document.querySelector('div._2kD36e8w0LlK3JPw_QHlKm') || document.body;
+                        const panel = candidate || document.querySelector('div._2kD36e8w0LlK3JPw_QHlKm');
                         if (!panel) return null;
 
                         const titleNode = panel.querySelector('div[style*="background-color"]') || panel.querySelector('h1') || panel.querySelector('h2') || panel.querySelector(':scope > div');
                         const title = titleNode ? titleNode.textContent.trim() : '';
 
-                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [], raw_html: panel.outerHTML };
+                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [], unknown_extras: {}, raw_html: panel.outerHTML };
 
                         // label/value rows: try to find rows containing label-like text
                         const rows = Array.from(panel.querySelectorAll('div')).filter(d => (d.querySelectorAll(':scope > div').length >= 2));
-                        rows.forEach(row => {
-                            const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
-                            if (cols.length >= 2) {
-                                const lab = cols[0].toUpperCase();
-                                const val = cols[1];
+                        const rowsCols = rows.map(r => Array.from(r.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean));
+                        // If the first matching row looks like labels and the next row looks like values, map by index
+                        if (rowsCols.length >= 2 && rowsCols[0].every(x => x && x === x.toUpperCase())) {
+                            const labels = rowsCols[0];
+                            const values = rowsCols[1] || [];
+                            for (let i = 0; i < labels.length; i++) {
+                                const lab = (labels[i]||'').toUpperCase();
+                                const val = values[i] || null;
+                                const key = lab.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
                                 if (lab === 'SENDER') out.sender = val;
                                 else if (lab === 'EXPIRES') out.expires = val;
                                 else if (lab === 'SENT') out.sent = val;
                                 else if (lab === 'AREA') out.area = val;
                                 else if (lab === 'ID') out.id = val;
-                                else if (/WEA\s*360CH/i.test(lab)) out.wea360 = val;
-                                else if (/WEA\s*90CH/i.test(lab)) out.wea90 = val;
+                                else if (/WEA\s*360/i.test(lab)) out.wea360 = val;
+                                else if (/WEA\s*90/i.test(lab)) out.wea90 = val;
+                                else if (lab === 'HEADLINE_EN' || lab === 'HEADLINE' || /HEADLINE/i.test(lab)) out.headline_en = val;
+                                else if (lab === 'DESCRIPTION_EN' || /DESCRIPTION/i.test(lab)) out.description_en = val;
+                                else if (lab === 'INSTRUCTIONS_EN' || /INSTRUCTION/i.test(lab)) out.instructions_en = val;
+                                else if (lab === 'CONTACT') out.contact = val;
+                                else out.unknown_extras[key] = val;
                             }
-                        });
+                        } else {
+                            rows.forEach(row => {
+                                const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                if (cols.length >= 2) {
+                                    const lab = cols[0].toUpperCase();
+                                    const val = cols[1];
+                                    const key = lab.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+                                    if (lab === 'SENDER') out.sender = val;
+                                    else if (lab === 'EXPIRES') out.expires = val;
+                                    else if (lab === 'SENT') out.sent = val;
+                                    else if (lab === 'AREA') out.area = val;
+                                    else if (lab === 'ID') out.id = val;
+                                    else if (/WEA\s*360/i.test(lab)) out.wea360 = val;
+                                    else if (/WEA\s*90/i.test(lab)) out.wea90 = val;
+                                    else if (/HEADLINE/i.test(lab)) out.headline_en = val;
+                                    else if (/DESCRIPTION/i.test(lab)) out.description_en = val;
+                                    else if (/INSTRUCTION/i.test(lab)) out.instructions_en = val;
+                                    else if (lab === 'CONTACT') out.contact = val;
+                                    else out.unknown_extras[key] = val;
+                                }
+                            });
+                        }
 
                         // fallback message: look for obvious message containers
                         const msgCandidate = panel.querySelector('.LgcsbPsiL2uEI-nZqHF-e') || panel.querySelector('.message') || panel.querySelector('p');
@@ -346,25 +376,44 @@ def fetch_pbs_warn_alerts_with_details():
                         // history items: parse list items into structured entries {tag, title, id, sent}
                         out.history = Array.from(panel.querySelectorAll('.ant-list-items li')).map(li => {
                             try {
-                                // title is usually the first ant-row > ant-col block
-                                const titleNode = li.querySelector('div.ant-row > div, div');
-                                const titleText = titleNode ? (titleNode.textContent||'').trim() : '';
-                                // subsequent rows often contain label/value pairs like ID / Sent
-                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
-                                let id = null, sent = null, tag = null;
                                 const tagSpan = li.querySelector('span._1iv5qxCNer7nWUpYxE49gV');
-                                if (tagSpan) tag = (tagSpan.textContent||'').trim();
-                                labelRows.forEach(r => {
-                                    const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
-                                    if (cols.length === 2) {
-                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
-                                        if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
-                                    } else if (cols.length === 4) {
-                                        // case where labels are side-by-side: [ID, Sent]
-                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
-                                        if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                const tag = tagSpan ? (tagSpan.textContent||'').trim() : null;
+                                // title often includes the tag span; remove the tag text if present
+                                const titleNode = li.querySelector('div.ant-row > div, div');
+                                let titleText = titleNode ? (titleNode.textContent||'').trim() : '';
+                                if (tagSpan) {
+                                    const tagText = (tagSpan.textContent||'').trim();
+                                    // remove tag occurrence and any leading whitespace / NBSP
+                                    titleText = titleText.replace(tagText, '').replace(/^[:\s\u00A0]+/, '').trim();
+                                }
+
+                                // subsequent rows often contain label rows and value rows
+                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
+                                let id = null, sent = null;
+                                const rowsCols = labelRows.map(r => Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean));
+                                // If first row is labels and second row values, map them
+                                if (rowsCols.length >= 2 && rowsCols[0].length > 0) {
+                                    const labels = rowsCols[0];
+                                    const values = rowsCols[1] || [];
+                                    for (let i = 0; i < labels.length; i++) {
+                                        const lab = (labels[i]||'').toUpperCase();
+                                        const val = values[i] || null;
+                                        if (lab === 'ID') id = val;
+                                        else if (lab === 'SENT') sent = val;
                                     }
-                                });
+                                } else {
+                                    // fallback: per-row parsing
+                                    labelRows.forEach(r => {
+                                        const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                        if (cols.length === 2) {
+                                            if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                            if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
+                                        } else if (cols.length === 4) {
+                                            if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                            if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                        }
+                                    });
+                                }
                                 return { tag: tag, title: titleText, id: id, sent: sent };
                             } catch (e) { return null; }
                         }).filter(Boolean);
@@ -383,42 +432,87 @@ def fetch_pbs_warn_alerts_with_details():
                     (el) => {
                         const titleNode = el.querySelector('div[style*="background-color"]') || el.querySelector(':scope > div');
                         const title = titleNode ? titleNode.textContent.trim() : '';
-                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [] };
+                        const out = { title: title, message: '', sender: null, expires: null, sent: null, area: null, id: null, wea360: null, wea90: null, severity_color: null, history: [], unknown_extras: {} };
                         const rows = Array.from(el.querySelectorAll('div')).filter(d => (d.querySelectorAll(':scope > div').length >= 2));
-                        rows.forEach(row => {
-                            const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
-                            if (cols.length >= 2) {
-                                const lab = cols[0].toUpperCase();
-                                const val = cols[1];
+                        const rowsCols = rows.map(r => Array.from(r.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean));
+                        if (rowsCols.length >= 2 && rowsCols[0].every(x => x && x === x.toUpperCase())) {
+                            const labels = rowsCols[0];
+                            const values = rowsCols[1] || [];
+                            for (let i = 0; i < labels.length; i++) {
+                                const lab = (labels[i]||'').toUpperCase();
+                                const val = values[i] || null;
+                                const key = lab.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
                                 if (lab === 'SENDER') out.sender = val;
                                 else if (lab === 'EXPIRES') out.expires = val;
                                 else if (lab === 'SENT') out.sent = val;
                                 else if (lab === 'AREA') out.area = val;
                                 else if (lab === 'ID') out.id = val;
-                                else if (/WEA\s*360CH/i.test(lab)) out.wea360 = val;
-                                else if (/WEA\s*90CH/i.test(lab)) out.wea90 = val;
+                                else if (/WEA\s*360/i.test(lab)) out.wea360 = val;
+                                else if (/WEA\s*90/i.test(lab)) out.wea90 = val;
+                                else if (/HEADLINE/i.test(lab)) out.headline_en = val;
+                                else if (/DESCRIPTION/i.test(lab)) out.description_en = val;
+                                else if (/INSTRUCTION/i.test(lab)) out.instructions_en = val;
+                                else if (lab === 'CONTACT') out.contact = val;
+                                else out.unknown_extras[key] = val;
                             }
-                        });
+                        } else {
+                            rows.forEach(row => {
+                                const cols = Array.from(row.querySelectorAll(':scope > div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                if (cols.length >= 2) {
+                                    const lab = cols[0].toUpperCase();
+                                    const val = cols[1];
+                                    const key = lab.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+                                    if (lab === 'SENDER') out.sender = val;
+                                    else if (lab === 'EXPIRES') out.expires = val;
+                                    else if (lab === 'SENT') out.sent = val;
+                                    else if (lab === 'AREA') out.area = val;
+                                    else if (lab === 'ID') out.id = val;
+                                    else if (/WEA\s*360/i.test(lab)) out.wea360 = val;
+                                    else if (/WEA\s*90/i.test(lab)) out.wea90 = val;
+                                    else if (/HEADLINE/i.test(lab)) out.headline_en = val;
+                                    else if (/DESCRIPTION/i.test(lab)) out.description_en = val;
+                                    else if (/INSTRUCTION/i.test(lab)) out.instructions_en = val;
+                                    else if (lab === 'CONTACT') out.contact = val;
+                                    else out.unknown_extras[key] = val;
+                                }
+                            });
+                        }
                         const msgCandidate = el.querySelector('.LgcsbPsiL2uEI-nZqHF-e') || el.querySelector('.message') || el.querySelector('p');
                         if (msgCandidate) out.message = msgCandidate.textContent.trim();
                         out.history = Array.from(el.querySelectorAll('.ant-list-items li')).map(li => {
                             try {
-                                const titleNode = li.querySelector('div.ant-row > div, div');
-                                const titleText = titleNode ? (titleNode.textContent||'').trim() : '';
-                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
-                                let id = null, sent = null, tag = null;
                                 const tagSpan = li.querySelector('span._1iv5qxCNer7nWUpYxE49gV');
-                                if (tagSpan) tag = (tagSpan.textContent||'').trim();
-                                labelRows.forEach(r => {
-                                    const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
-                                    if (cols.length === 2) {
-                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
-                                        if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
-                                    } else if (cols.length === 4) {
-                                        if (cols[0].toUpperCase() === 'ID') id = cols[1];
-                                        if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                const tag = tagSpan ? (tagSpan.textContent||'').trim() : null;
+                                const titleNode = li.querySelector('div.ant-row > div, div');
+                                let titleText = titleNode ? (titleNode.textContent||'').trim() : '';
+                                if (tagSpan) {
+                                    const tagText = (tagSpan.textContent||'').trim();
+                                    titleText = titleText.replace(tagText, '').replace(/^[:\s\u00A0]+/, '').trim();
+                                }
+                                const labelRows = Array.from(li.querySelectorAll('div.ant-row')).slice(1);
+                                let id = null, sent = null;
+                                const rowsCols = labelRows.map(r => Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean));
+                                if (rowsCols.length >= 2 && rowsCols[0].length > 0) {
+                                    const labels = rowsCols[0];
+                                    const values = rowsCols[1] || [];
+                                    for (let i = 0; i < labels.length; i++) {
+                                        const lab = (labels[i]||'').toUpperCase();
+                                        const val = values[i] || null;
+                                        if (lab === 'ID') id = val;
+                                        else if (lab === 'SENT') sent = val;
                                     }
-                                });
+                                } else {
+                                    labelRows.forEach(r => {
+                                        const cols = Array.from(r.querySelectorAll('div')).map(d => (d.textContent||'').trim()).filter(Boolean);
+                                        if (cols.length === 2) {
+                                            if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                            if (cols[0].toUpperCase() === 'SENT') sent = cols[1];
+                                        } else if (cols.length === 4) {
+                                            if (cols[0].toUpperCase() === 'ID') id = cols[1];
+                                            if (cols[2].toUpperCase() === 'SENT') sent = cols[3];
+                                        }
+                                    });
+                                }
                                 return { tag: tag, title: titleText, id: id, sent: sent };
                             } catch (e) { return null; }
                         }).filter(Boolean);
@@ -429,13 +523,14 @@ def fetch_pbs_warn_alerts_with_details():
                     details = None
                     for attempt in range(4):
                         try:
-                            # Wait briefly for a panel-like node to appear (SENDER/EXPIRES text)
+                            # Prefer a real detail panel element; avoid evaluating against document.body
+                            panel_selector = "div._3g3ZIcAdPcGK1KmFtttxbk._2kD36e8w0LlK3JPw_QHlKm, div._2kD36e8w0LlK3JPw_QHlKm"
                             try:
-                                page.wait_for_function("() => Array.from(document.querySelectorAll('div')).some(d => /SENDER|EXPIRES/i.test(d.textContent || ''))", timeout=2000)
+                                page.wait_for_selector(panel_selector, timeout=1500)
+                                details = page.evaluate(global_js)
                             except Exception:
-                                # not fatal; continue to evaluate
-                                pass
-                            details = page.evaluate(global_js)
+                                # Panel not found yet; skip global eval this attempt
+                                details = None
                         except Exception:
                             details = None
 
@@ -480,23 +575,76 @@ def fetch_pbs_warn_alerts_with_details():
                     # Normalize the details dict to include expected keys
                     if not isinstance(details, dict):
                         details = {}
-                    expected_keys = ['title', 'message', 'sender', 'expires', 'sent', 'area', 'id', 'wea360', 'wea90', 'severity_color', 'raw_html', 'history']
-                    for k in expected_keys:
+                    # canonical keys we want at top level
+                    canonical_keys = ['title', 'message', 'sender', 'expires', 'sent', 'area', 'id', 'wea360', 'wea90', 'severity_color', 'raw_html', 'history', 'headline_en', 'description_en', 'instructions_en', 'contact', 'unknown_extras']
+                    # ensure canonical keys exist
+                    for k in canonical_keys:
                         if k not in details:
-                            details[k] = [] if k == 'history' else None
+                            details[k] = [] if k == 'history' else ({} if k == 'unknown_extras' else None)
 
+                    # Move any non-canonical top-level keys into extras
+                    try:
+                        for k in list(details.keys()):
+                            if k not in canonical_keys:
+                                # move unexpected keys into unknown_extras (don't overwrite existing keys)
+                                try:
+                                    if not isinstance(details.get('unknown_extras'), dict):
+                                        details['unknown_extras'] = {}
+                                    details['unknown_extras'][k] = details.pop(k)
+                                    logging.info(f"Moved unexpected top-level key '{k}' into unknown_extras")
+                                except Exception:
+                                    # ensure unknown_extras exists
+                                    details.setdefault('unknown_extras', {})
+                                    details['unknown_extras'][k] = details.pop(k)
+                                    logging.info(f"Moved unexpected top-level key '{k}' into unknown_extras")
+                    except Exception:
+                        pass
+
+                    # Log any unknown_extras keys found for this alert to help tuning
+                    try:
+                        if details.get('unknown_extras') and isinstance(details.get('unknown_extras'), dict):
+                            keys_found = list(details.get('unknown_extras').keys())
+                            if keys_found:
+                                logging.info(f"Alert unknown_extras keys: {keys_found}")
+                    except Exception:
+                        pass
+
+                    # Post-process: if top-level id or sent look wrong (e.g. id == 'Sent'), try to pull from history
+                    try:
+                        if (not details.get('id') or (isinstance(details.get('id'), str) and details.get('id').strip().lower() == 'sent')) and details.get('history'):
+                            for h in details.get('history'):
+                                if isinstance(h, dict) and h.get('id'):
+                                    details['id'] = h.get('id')
+                                    break
+                        if (not details.get('sent')) and details.get('history'):
+                            for h in details.get('history'):
+                                if isinstance(h, dict) and h.get('sent'):
+                                    details['sent'] = h.get('sent')
+                                    break
+                    except Exception:
+                        pass
+
+                    # NOTE: per-alert `page_updated` removed; keep page_updated only at file-level
                     alerts.append(details)
                 except Exception:
                     continue
 
             # Save alerts to JSON using site timestamp (fallback to utcnow if missing)
             try:
-                ts_for_file = format_timestamp_for_filename(site_timestamp) if site_timestamp else datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+                # Use site timestamp when available, otherwise UTC now. Ensure trailing 'Z' to indicate UTC.
+                raw_ts = format_timestamp_for_filename(site_timestamp) if site_timestamp else datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+                ts_for_file = f"{raw_ts}Z" if not str(raw_ts).endswith('Z') else raw_ts
                 output_folder = Path("./pbs_warn_outputs")
                 output_folder.mkdir(parents=True, exist_ok=True)
                 out_file = output_folder / f"pbs_warn_alerts_{ts_for_file}.json"
+                # file-level metadata
+                file_payload = {
+                    "scrape_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "page_updated": site_timestamp if site_timestamp else None,
+                    "alerts": alerts,
+                }
                 with open(out_file, "w", encoding="utf-8") as fh:
-                    json.dump(alerts, fh, ensure_ascii=False, indent=2)
+                    json.dump(file_payload, fh, ensure_ascii=False, indent=2)
                 logging.info(f"Saved {len(alerts)} detailed alerts to {out_file}")
             except Exception as e:
                 logging.error(f"Failed saving detailed alerts JSON: {e}")
