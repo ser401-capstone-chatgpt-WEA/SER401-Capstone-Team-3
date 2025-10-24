@@ -32,7 +32,7 @@ def compare_alerts(previous_alert_list, current_alert_list):
     # compare two lists of alert dicts and classify alerts as new, updated, or cleared
     # alerts are matched by title and sender (for now)
     def alert_identity(alert):
-        # use title+sender as a composite key (adjust if needed)
+        # use title+sender as a composite key
         return (alert.get('title', '').strip(), alert.get('sender', '').strip())
 
     # build lookup maps for previous and current alerts
