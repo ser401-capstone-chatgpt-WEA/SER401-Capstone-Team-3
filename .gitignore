@@ -43,3 +43,4 @@ __pycache__/
 *.log
 *.csv
 pbs_warn_outputs/
+/.idea
