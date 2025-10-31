@@ -1,5 +1,3 @@
-# untested but theoretically might work, mainly including for proof of daily work, do not use w/o testing it might fail
-
 import json
 from datetime import datetime
 
@@ -57,5 +55,6 @@ if __name__ == "__main__":
 
     with open("pbs_warn_cleaned.json", "w") as f:
         json.dump(cleaned_data, f, indent=2)
+
 
     print("Conversion complete. Output saved to pbs_warn_cleaned.json")
