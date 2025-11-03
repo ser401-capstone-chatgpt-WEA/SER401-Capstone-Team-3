@@ -44,3 +44,4 @@ __pycache__/
 *.csv
 pbs_warn_outputs/
 /.idea
+warn_snapshot/
