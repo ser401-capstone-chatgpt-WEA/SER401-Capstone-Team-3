@@ -77,16 +77,21 @@ def fetch_alerts_api(
             pages_info = data.get('pages', {})
             total_pages = pages_info.get('pages', 1)
             current_page = pages_info.get('page', 1)
-            
-            # Fetch remaining pages
+            # only fetch if total_pages > 1 and current_page < total_pages
             while current_page < total_pages:
+                # check for next_url if present
+                next_url = pages_info.get('next_url')
+                if not next_url:
+                    logging.info(f"No next_url in API response. Stopping at page {current_page}.")
+                    break
                 current_page += 1
                 params['page'] = current_page
-                
                 logging.info(f"Fetching page {current_page} of {total_pages}")
                 response = requests.get(url, params=params, headers=DEFAULT_HEADERS, timeout=timeout)
+                if response.status_code == 404:
+                    logging.warning(f"Page {current_page} returned 404. Stopping.")
+                    break
                 response.raise_for_status()
-                
                 page_data = response.json()
                 page_alerts = page_data.get('alerts', [])
                 all_alerts.extend(page_alerts)
@@ -278,13 +283,28 @@ def print_alert_summary(api_response: Dict[str, Any]) -> None:
 
 def main():
     try:
-        # Fetch and save alerts
-        data, output_file = fetch_and_save_alerts()
-        
-        # Print summary to console
-        print_alert_summary(data)
+        # fetch and save active alerts
+        api_response, output_file = fetch_and_save_alerts()
+
+        # print summary to console
+        print_alert_summary(api_response)
         print(f"\nData saved to: {output_file}")
-        
+
+        # --- run alert change comparison on program start ---
+        try:
+            from alert_compare import compare_and_report_alerts
+            current_alerts = api_response.get("alerts", [])
+            # save the diff summary to a file with timestamps
+            diff_output_path = str(output_file).replace(".json", "_diff.json")
+            compare_and_report_alerts(
+                output_folder="pbs_warn_outputs",
+                current_alerts=current_alerts,
+                diff_output_path=diff_output_path
+            )
+        except Exception as compare_error:
+            logging.error(f"Error running alert comparison: {compare_error}")
+            print(f"Error running alert comparison: {compare_error}")
+
     except Exception as e:
         logging.error(f"Error in main: {e}")
         print(f"Error: {e}")
