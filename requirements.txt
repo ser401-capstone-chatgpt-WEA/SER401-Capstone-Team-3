@@ -1,2 +1,0 @@
-pandas==2.3.3
-playwright==1.55.0
