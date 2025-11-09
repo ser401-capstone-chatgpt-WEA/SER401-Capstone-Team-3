@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Dict, Any
 from urllib.parse import urlencode
 
+from alert_compare import compare_and_report_alerts
+from alert_summary_report import generate_report_from_file
+
 # Configure logging
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -292,7 +295,6 @@ def main():
 
         # --- run alert change comparison on program start ---
         try:
-            from alert_compare import compare_and_report_alerts
             current_alerts = api_response.get("alerts", [])
             # save the diff summary to a file with timestamps
             diff_output_path = str(output_file).replace(".json", "_diff.json")
@@ -304,6 +306,14 @@ def main():
         except Exception as compare_error:
             logging.error(f"Error running alert comparison: {compare_error}")
             print(f"Error running alert comparison: {compare_error}")
+
+        # --- generate markdown summary report ---
+        try:
+            report_file = generate_report_from_file(file_path=str(output_file))
+            print(f"\nMarkdown report generated: {report_file}")
+        except Exception as report_error:
+            logging.error(f"Error generating summary report: {report_error}")
+            print(f"Error generating summary report: {report_error}")
 
     except Exception as e:
         logging.error(f"Error in main: {e}")
