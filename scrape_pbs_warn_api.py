@@ -6,6 +6,7 @@ It maintains similar logging and output conventions as the existing scrapers.
 """
 
 import json
+import argparse
 import logging
 import requests
 from datetime import datetime, timezone
@@ -286,6 +287,18 @@ def print_alert_summary(api_response: Dict[str, Any]) -> None:
 
 def main():
     try:
+        # parse CLI arguments
+        parser = argparse.ArgumentParser(
+            description="Fetch PBS WARN alerts and optionally generate a Markdown summary report."
+        )
+        parser.add_argument(
+            "--generate-report",
+            dest="generate_report",
+            action="store_true",
+            help="Generate Markdown summary report (default: disabled)",
+        )
+        args = parser.parse_args()
+
         # fetch and save active alerts
         api_response, output_file = fetch_and_save_alerts()
 
@@ -307,13 +320,16 @@ def main():
             logging.error(f"Error running alert comparison: {compare_error}")
             print(f"Error running alert comparison: {compare_error}")
 
-        # --- generate markdown summary report ---
-        try:
-            report_file = generate_report_from_file(file_path=str(output_file))
-            print(f"\nMarkdown report generated: {report_file}")
-        except Exception as report_error:
-            logging.error(f"Error generating summary report: {report_error}")
-            print(f"Error generating summary report: {report_error}")
+        # --- optionally generate markdown summary report ---
+        if args.generate_report:
+            try:
+                report_file = generate_report_from_file(file_path=str(output_file))
+                print(f"\nMarkdown report generated: {report_file}")
+            except Exception as report_error:
+                logging.error(f"Error generating summary report: {report_error}")
+                print(f"Error generating summary report: {report_error}")
+        else:
+            logging.info("Markdown report generation skipped (flag not set)")
 
     except Exception as e:
         logging.error(f"Error in main: {e}")
