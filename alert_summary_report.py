@@ -262,6 +262,12 @@ def generate_markdown_report(api_response: Dict[str, Any], source_file: Path) ->
         md_lines.append(f"- **Sent:** {alert.get('sent', 'N/A')}")
         md_lines.append(f"- **Expires:** {alert.get('expires', 'N/A')}")
         md_lines.append(f"- **CAP Identifier:** {alert.get('cap_identifier', 'N/A')}")
+        # Per alert map link
+        alert_id = alert.get('id')
+        if alert_id is not None:
+            alert_map_html = source_file.parent / f"pbs_warn_alert_{alert_id}.html"
+            if alert_map_html.exists():
+                md_lines.append(f"- **Map Visualization:** [View Map for Alert {alert_id}]({alert_map_html.name})")
         md_lines.append("")
         
         # Messages
