@@ -25,33 +25,37 @@ def get_alert_area_polygons(json_file_path):
             polygons_metadata.append(area_details)
     return polygons_metadata
 
-def create_leaflet_alert_map(json_file_path, output_html_path=None):
+def create_leaflet_alert_maps_per_alert(json_file_path):
     """
-    Generates a standalone HTML file with Leaflet.js to display alert polygons from PBS WARN alerts.
+    Generates a standalone HTML file with Leaflet.js for each alert in the JSON file.
+    Each file is named pbs_warn_alert_<alert_id>.html and visualizes only that alert's polygons.
     """
-    alert_areas = get_alert_area_polygons(json_file_path)
-    if not alert_areas:
-        print("No polygons found in alert file.")
-        return None
-    polygons_metadata = get_alert_area_polygons(json_file_path)
-    first_polygon = alert_areas[0]['polygon']
-    map_center_latitude = sum([point[0] for point in first_polygon]) / len(first_polygon)
-    map_center_longitude = sum([point[1] for point in first_polygon]) / len(first_polygon)
-    # Prepare JavaScript polygons
-    first_polygon = polygons_metadata[0]['polygon']
-    for area in alert_areas:
-        polygon_coordinates = [[latitude, longitude] for latitude, longitude in area['polygon']]
-        area_label = area.get('area_description') or area.get('event') or 'Alert Area'
-    leaflet_polygons = []
-    for polygon_info in polygons_metadata:
-        polygon_coordinates = [[latitude, longitude] for latitude, longitude in polygon_info['polygon']]
-        area_label = polygon_info.get('area_description') or polygon_info.get('event') or 'Alert Area'
-        popup_content = f"{area_label}<br>Sender: {polygon_info.get('sender', '')}"
-        leaflet_polygons.append({'coordinates': polygon_coordinates, 'popup': popup_content})
-    source_json_filename = Path(json_file_path).name
-    # If the HTML and JSON are in the same folder, link directly; else, just show filename
-    json_link = source_json_filename if not output_html_path or Path(output_html_path).parent == Path(json_file_path).parent else None
-    html_content = f'''<!DOCTYPE html>
+    with open(json_file_path, 'r', encoding='utf-8') as file:
+        alert_data = json.load(file)
+    alerts = alert_data.get('alerts', [])
+    output_files = []
+    for alert in alerts:
+        alert_id = alert.get('id')
+        polygons = []
+        area_description = None
+        for area in alert.get('areas', []):
+            if area.get('type') == 'polygon':
+                polygons.append(area.get('value'))
+            elif area.get('type') == 'area_description':
+                area_description = area.get('value')
+        if not polygons:
+            continue
+        # Flatten polygons (usually one per alert)
+        for poly_coords in polygons:
+            map_center_latitude = sum([pt[0] for pt in poly_coords]) / len(poly_coords)
+            map_center_longitude = sum([pt[1] for pt in poly_coords]) / len(poly_coords)
+            leaflet_polygons = []
+            area_label = area_description or alert.get('event') or 'Alert Area'
+            popup_content = f"{area_label}<br>Sender: {alert.get('sender', '')}"
+            leaflet_polygons.append({'coordinates': poly_coords, 'popup': popup_content})
+            source_json_filename = Path(json_file_path).name
+            html_filename = f"pbs_warn_alert_{alert_id}.html"
+            html_content = f'''<!DOCTYPE html>
 <html>
 <head>
     <title>PBS WARN Alert Map</title>
@@ -63,7 +67,7 @@ def create_leaflet_alert_map(json_file_path, output_html_path=None):
 <body>
     <h2>PBS WARN Alert Map</h2>
     <div style="margin-bottom: 10px;">
-        <b>Source JSON file:</b> {'<a href="' + json_link + '" target="_blank">' + source_json_filename + '</a>' if json_link else source_json_filename}
+        <b>Source JSON file:</b> <a href="{source_json_filename}" target="_blank">{source_json_filename}</a>
     </div>
     <div id="map"></div>
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -80,18 +84,17 @@ def create_leaflet_alert_map(json_file_path, output_html_path=None):
     </script>
 </body>
 </html>'''
-    if not output_html_path:
-        output_html_path = str(Path(json_file_path).with_suffix('.html'))
-    with open(output_html_path, 'w', encoding='utf-8') as html_file:
-        html_file.write(html_content)
-    print(f"Map saved to {output_html_path}")
-    return output_html_path
+            html_path = Path(json_file_path).parent / html_filename
+            with open(html_path, 'w', encoding='utf-8') as html_file:
+                html_file.write(html_content)
+            print(f"Map saved to {html_path}")
+            output_files.append(str(html_path))
+    return output_files
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("Usage: python alert_map_leaflet.py <pbs_warn_alerts.json> [output_map.html]")
+        print("Usage: python alert_map_leaflet.py <pbs_warn_alerts.json>")
         sys.exit(1)
     json_path = sys.argv[1]
-    html_output_path = sys.argv[2] if len(sys.argv) > 2 else None
-    create_leaflet_alert_map(json_path, html_output_path)
+    create_leaflet_alert_maps_per_alert(json_path)
