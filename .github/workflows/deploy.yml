@@ -1,0 +1,30 @@
+name: Deploy Scraper
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "dev1" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_PERSONAL_AUTHKEY }}
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd ~/SER401-Capstone-Team-3
+            git fetch origin
+            git reset --hard origin/dev1
+            docker compose -f docker/docker-compose.yml up -d --build
