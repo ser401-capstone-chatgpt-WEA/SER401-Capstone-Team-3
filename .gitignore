@@ -46,3 +46,6 @@ pbs_warn_outputs/
 /.idea
 pbs_warn_reports/
 warn_snapshot/
+
+# Environment variables
+.env
