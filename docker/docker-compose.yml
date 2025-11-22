@@ -7,7 +7,9 @@ services:
     volumes:
       - ../pbs_warn_outputs:/app/pbs_warn_outputs
     depends_on:
-      - tailscale
+      tailscale:
+        condition: service_healthy
+    restart: on-failure
 
   tailscale:
     image: tailscale/tailscale:latest
@@ -23,6 +25,12 @@ services:
       - NET_ADMIN
       - NET_RAW
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "tailscale", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
 volumes:
   ts_state:
