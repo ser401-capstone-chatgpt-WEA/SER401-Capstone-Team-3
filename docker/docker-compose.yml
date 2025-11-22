@@ -1,14 +1,4 @@
 services:
-  scraper:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    network_mode: service:tailscale
-    volumes:
-      - ../pbs_warn_outputs:/app/pbs_warn_outputs
-    depends_on:
-      - tailscale
-
   tailscale:
     image: tailscale/tailscale:latest
     hostname: pbs-warn-scraper
@@ -18,11 +8,18 @@ services:
       - TS_USERSPACE=false
     volumes:
       - ts_state:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
-      - NET_RAW
     restart: unless-stopped
+  scraper:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    network_mode: service:tailscale
+    volumes:
+      - ../pbs_warn_outputs:/app/pbs_warn_outputs
+    depends_on:
+      - tailscale
 
 volumes:
   ts_state:
