@@ -50,12 +50,15 @@ jobs:
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@master
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          envs: TS_AUTHKEY
           script: |
             cd ~/SER401-Capstone-Team-3
             git fetch origin
             git reset --hard origin/dev1
-            docker compose -f docker/docker-compose.yml up -d --build
+            TS_AUTHKEY=$TS_AUTHKEY docker compose -f docker/docker-compose.yml up -d --build
