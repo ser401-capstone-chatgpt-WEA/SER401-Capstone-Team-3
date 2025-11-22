@@ -13,7 +13,7 @@ services:
     image: tailscale/tailscale:latest
     hostname: pbs-warn-scraper
     environment:
-      - TS_AUTHKEY=tskey-auth-kRjeQj5ZJq11CNTRL-BQoLqaxaYXPMetRhaQh8YPr3gvrtrkc2
+      - TS_AUTHKEY=tskey-auth-kH5hj89nTw11CNTRL-Cs1md1ZgogQ4GgiR8udDgQBxwrd1sF4i
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
     volumes:
