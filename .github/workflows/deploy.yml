@@ -19,8 +19,12 @@ jobs:
 
       - name: Debug Network & Tailscale
         run: |
-          echo "Checking Tailscale status..."
-          tailscale status
+          
+          NODE_KEY=$(tailscale status --json | jq -r .Self.PublicKey)
+          echo "::warning title=Tailscale Lock Action Required::Run this command on your trusted machine: tailscale lock sign $NODE_KEY"
+          
+          echo "Waiting 2 minutes for manual signing..."
+          sleep 120
           
           echo "Checking connectivity to host..."
           HOST="${{ secrets.SSH_HOST }}"
