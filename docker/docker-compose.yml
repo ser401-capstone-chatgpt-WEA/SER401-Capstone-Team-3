@@ -28,9 +28,9 @@ services:
     healthcheck:
       test: ["CMD", "tailscale", "status"]
       interval: 5s
-      timeout: 5s
-      retries: 15
-      start_period: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
 volumes:
   ts_state:
