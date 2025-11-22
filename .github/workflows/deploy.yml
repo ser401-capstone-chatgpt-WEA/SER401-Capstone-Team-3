@@ -3,7 +3,7 @@ name: Deploy Scraper
 on:
   workflow_dispatch:
   push:
-    branches: [ "dev1" ]
+    branches: [ "US-41-dev1" ]
 
 jobs:
   deploy:
