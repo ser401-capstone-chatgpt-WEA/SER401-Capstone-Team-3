@@ -20,4 +20,6 @@ services:
       - ../pbs_warn_outputs:/app/pbs_warn_outputs
     depends_on:
       - tailscale
-volumes: ts_state:
+
+volumes:
+  ts_state:
