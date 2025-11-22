@@ -17,6 +17,20 @@ jobs:
         with:
           authkey: ${{ secrets.TS_PERSONAL_AUTHKEY }}
 
+      - name: Debug Network & Tailscale
+        run: |
+          echo "Checking Tailscale status..."
+          tailscale status
+          
+          echo "Checking connectivity to host..."
+          HOST="${{ secrets.SSH_HOST }}"
+          
+          echo "Pinging $HOST..."
+          ping -c 3 "$HOST" || echo "Ping failed"
+          
+          echo "Checking SSH port 22..."
+          nc -zv -w 5 "$HOST" 22 || echo "Port 22 unreachable"
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@master
         with:
