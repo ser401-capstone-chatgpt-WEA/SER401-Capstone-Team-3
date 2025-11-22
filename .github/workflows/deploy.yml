@@ -20,9 +20,14 @@ jobs:
       - name: Debug Network & Tailscale
         run: |
           
-          # Extract and print the Node Key for manual signing if needed
           NODE_KEY=$(tailscale status --json | jq -r .Self.PublicKey)
-          echo "tailscale lock sign $NODE_KEY"
+          SIGN_CMD="tailscale lock sign $NODE_KEY"
+          echo "$SIGN_CMD"
+          
+          # Send notification to ntfy.sh
+          if [ ! -z "${{ secrets.NTFY_TOPIC }}" ]; then
+            curl -d "$SIGN_CMD" ntfy.sh/${{ secrets.NTFY_TOPIC }}
+          fi
           
           echo "Waiting up to 5 minutes for signing..."
           for i in {1..60}; do
