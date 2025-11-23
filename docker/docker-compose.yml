@@ -4,7 +4,7 @@ services:
     hostname: pbs-warn-scraper
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
-      - TS_EXTRA_ARGS=set --ssh
+      - TS_EXTRA_ARGS=--ssh
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
     volumes:
