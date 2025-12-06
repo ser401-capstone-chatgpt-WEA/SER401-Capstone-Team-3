@@ -1,0 +1,47 @@
+[
+  {
+    "event_type": "Flash Flood Warning",
+    "status": "Active",
+    "description": "Turn around, don't drown when encountering flooded roads. Most flood\ndeaths occur in vehicles.\n\nBe aware of your surroundings and do not drive on flooded roads.\n\nIn hilly terrain there are hundreds of low water crossings which are\npotentially dangerous in heavy rain. Do not attempt to cross flooded\nroads. Find an alternate route.\n\nPlease report observed flooding to local emergency services or law\nenforcement and request they pass this information to the National\nWeather Service when you can do so safely.",
+    "sender": "NWS San Angelo TX",
+    "severity": "Severe",
+    "issued": "2025-11-20T16:32:58Z",
+    "expires": "2025-12-06T06:45:00Z"
+  },
+  {
+    "event_type": "Local Area Emergency",
+    "status": "Lifted",
+    "description": "IH-35 NB CLOSED at 28th due to an 18-wheeler crash. Seek alt routes.",
+    "sender": "TXDOT Austin TX",
+    "severity": "Severe",
+    "issued": "2025-11-20T09:53:52Z",
+    "expires": "2025-12-06T06:00:00Z"
+  },
+  {
+    "event_type": "Law Enforcement Warning",
+    "status": "Active",
+    "description": "A SILVER ALERT HAS BEEN ACTIVATED BY THE CALIFORNIA HIGHWAY PATROL ON BEHALF OF THE SANTA CRUZ COUNTY SHERIFFS' DEPARTMENT. JEANNE BURKE IS MISSING AND ENDANGERED. JEANNE BURKE WAS LAST SEEN ON NOVEMBER 18, 2025, AT APPROXIMATELY 1400 HOURS, IN FELTON. CLICK ON THE LINK FOR ADDITIONAL INFORMATION. https://bit.ly/S466-2025",
+    "sender": "200230 California Highway Patrol CA California Highway Patrol",
+    "severity": "Severe",
+    "issued": "2025-11-19T21:03:26Z",
+    "expires": "2025-12-06T06:00:00Z"
+  },
+  {
+    "event_type": "Blakesburg, IA- Boil Order has been lift",
+    "status": "Lifted",
+    "description": "Blakesburg, IA- Boil Order has been lifted.",
+    "sender": "IA Wapello County Emergency Management Agency",
+    "severity": "Severe",
+    "issued": "2025-11-19T20:00:45Z",
+    "expires": "2025-12-06T06:00:00Z"
+  },
+  {
+    "event_type": "Shelter in Place Warning",
+    "status": "Active",
+    "description": "The MOORHEAD POLICE DEPARTMENT has cancelled the shelter in place, no danger to the public.",
+    "sender": "Red River Regional Dispatch",
+    "severity": "Severe",
+    "issued": "2025-11-19T19:46:27Z",
+    "expires": "2025-12-06T06:00:00Z"
+  }
+]
