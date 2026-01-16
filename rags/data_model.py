@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+from geopy.distance import geodesic
 
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -154,6 +155,21 @@ def map_alert_to_ragdoc(
         latitude = alert.get('latitude')
         longitude = alert.get('longitude')
         
+        # Extract geospatial metadata
+        if 'areas' in alert:
+            for area in alert['areas']:
+                if area.get('type') == 'polygon' and 'coordinates' in area:
+                    coords = area['coordinates'][0]  # Assuming first polygon
+                    latitude = sum(pt[0] for pt in coords) / len(coords)
+                    longitude = sum(pt[1] for pt in coords) / len(coords)
+                    break
+
+        # Calculate distance to a predefined location (e.g., central point)
+        central_point = (33.4484, -112.0740)  # Example: Phoenix, AZ
+        distance_to_central = None
+        if latitude is not None and longitude is not None:
+            distance_to_central = geodesic((latitude, longitude), central_point).miles
+
         # Generate unique ID (prefer cap_identifier, fallback to hash of alert content + index)
         cap_id = alert.get('cap_identifier') or alert.get('id')
         if cap_id:
