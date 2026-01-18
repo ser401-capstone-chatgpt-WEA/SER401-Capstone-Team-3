@@ -190,25 +190,33 @@ def map_alert_to_ragdoc(
         # Current timestamp for ingestion tracking
         ingestion_ts = datetime.now(timezone.utc).isoformat() + 'Z'
         
+        # Categorize alert based on severity, urgency, and event type
+        severity = alert.get('severity', 'Unknown')
+        urgency = alert.get('urgency', 'Unknown')
+        event_type = alert.get('event', 'General')
+
+        category = "Uncategorized"
+        if severity == "Severe" and urgency in ["Immediate", "Expected"]:
+            category = "High Priority"
+        elif severity == "Moderate" or urgency == "Expected":
+            category = "Moderate Priority"
+        elif severity == "Minor" or urgency == "Future":
+            category = "Low Priority"
+
+        # Map alert to RAGDocument
         return RAGDocument(
             id=doc_id,
             text=text,
             event=event,
-            title=title,
             sender=sender,
-            severity=alert.get('severity'),
-            urgency=alert.get('urgency'),
-            certainty=alert.get('certainty'),
-            status=alert.get('status'),
-            category=alert.get('category'),
-            expires=alert.get('expires'),
-            sent=alert.get('sent'),
-            cap_identifier=alert.get('cap_identifier'),
             areas=alert.get('areas'),  # Keep as list
             latitude=latitude,
             longitude=longitude,
             source_file=source_file,
-            ingestion_timestamp=ingestion_ts
+            ingestion_timestamp=ingestion_ts,
+            severity=severity,
+            urgency=urgency,
+            category=category
         )
         
     except Exception as e:
