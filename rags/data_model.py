@@ -203,20 +203,25 @@ def map_alert_to_ragdoc(
         elif severity == "Minor" or urgency == "Future":
             category = "Low Priority"
 
+        # Add processing timestamps
+        processing_timestamp = now_utc_iso()
+
         # Map alert to RAGDocument
         return RAGDocument(
             id=doc_id,
             text=text,
             event=event,
             sender=sender,
-            areas=alert.get('areas'),  # Keep as list
+            areas=alert.get('areas', []),
             latitude=latitude,
             longitude=longitude,
             source_file=source_file,
-            ingestion_timestamp=ingestion_ts,
-            severity=severity,
-            urgency=urgency,
-            category=category
+            ingestion_timestamp=processing_timestamp,
+            metadata={
+                'distance_to_central': distance_to_central,
+                'category': category,
+                'processing_timestamp': processing_timestamp
+            }
         )
         
     except Exception as e:
