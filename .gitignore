@@ -46,6 +46,7 @@ pbs_warn_outputs/
 /.idea
 pbs_warn_reports/
 warn_snapshot/
+chroma_db/
 
 # Environment variables
 .env
