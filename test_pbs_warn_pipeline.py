@@ -182,9 +182,39 @@ def test_mixed_alert_changes():
     assert len(diff_summary["updated"]) == 1, "Should detect 1 updated alert"
     assert len(diff_summary["cleared"]) == 1, "Should detect 1 cleared alert"
 
+def test_metadata_enrichment():
+    """Test geospatial metadata, categorization, and timestamps."""
+    alert = {
+        "event": "Severe Weather",
+        "severity": "Severe",
+        "urgency": "Immediate",
+        "areas": [
+            {
+                "type": "polygon",
+                "coordinates": [[[33.5, -112.1], [33.6, -112.2], [33.7, -112.3]]]
+            }
+        ]
+    }
+
+    # Map alert to RAGDocument
+    rag_doc = map_alert_to_ragdoc(alert, source_file="test.json", alert_index=0)
+
+    # Validate geospatial metadata
+    assert rag_doc.latitude == 33.6
+    assert rag_doc.longitude == -112.2
+    assert "distance_to_central" in rag_doc.metadata
+
+    # Validate categorization
+    assert rag_doc.metadata["category"] == "High Priority"
+
+    # Validate processing timestamp
+    assert "processing_timestamp" in rag_doc.metadata
+    print("All metadata enrichment tests passed.")
+
 if __name__ == "__main__":
     test_new_alert_detection()
     test_updated_alert_detection()
     test_cleared_alert_detection()
     test_no_change_detection()
     test_mixed_alert_changes()
+    test_metadata_enrichment()
