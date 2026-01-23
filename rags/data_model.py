@@ -13,6 +13,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from geopy.distance import geodesic
 
+from mcp_server import now_utc_iso
+
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
     level=logging.INFO,
