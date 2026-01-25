@@ -65,6 +65,8 @@ class RAGDocument:
     longitude: Optional[float] = None
     source_file: Optional[str] = None
     ingestion_timestamp: Optional[str] = None
+    distance_to_central: Optional[float] = None
+    processing_timestamp: Optional[str] = None
     
     # Class-level config for metadata generation
     _METADATA_EXCLUDE = {'id', 'text', 'areas'}  # Fields not to include in metadata (handled specially)
@@ -219,11 +221,9 @@ def map_alert_to_ragdoc(
             longitude=longitude,
             source_file=source_file,
             ingestion_timestamp=processing_timestamp,
-            metadata={
-                'distance_to_central': distance_to_central,
-                'category': category,
-                'processing_timestamp': processing_timestamp
-            }
+            category=category,
+            distance_to_central=distance_to_central,
+            processing_timestamp=processing_timestamp,
         )
         
     except Exception as e:
