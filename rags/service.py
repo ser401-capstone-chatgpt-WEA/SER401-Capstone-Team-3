@@ -1,10 +1,11 @@
 """
 FastAPI RAG service for PBS WARN alerts.
 """
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
+import re
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
@@ -55,6 +56,34 @@ class QueryResponse(BaseModel):
     tokens_used: int = 0
 
 
+def validate_query(query: str):
+    """
+    Validate the query string.
+
+    Args:
+        query: The query string to validate.
+
+    Raises:
+        HTTPException: If the query is invalid.
+    """
+    if not query or len(query.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+    if len(query) > 1000:
+        raise HTTPException(status_code=400, detail="Query exceeds maximum length of 1,000 characters.")
+    if len(query) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters long.")
+
+    # Check for prohibited characters or patterns
+    prohibited_patterns = [r"DROP TABLE", r"--", r";"]
+    for pattern in prohibited_patterns:
+        if re.search(pattern, query, re.IGNORECASE):
+            raise HTTPException(status_code=400, detail="Query contains prohibited patterns or characters.")
+
+    # Ensure query contains only allowed characters
+    if not re.match(r"^[a-zA-Z0-9 .,?!'\"-]+$", query):
+        raise HTTPException(status_code=400, detail="Query contains unsupported characters.")
+
+
 @app.post("/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
     """
@@ -67,6 +96,8 @@ async def query_rag(request: QueryRequest):
         Grounded answer with source citations
     """
     try:
+        # Validate the query
+        validate_query(request.query)
         logging.info(f"Received query: {request.query}")
         logging.info(f"Query parameters: top_k={request.top_k}, filters={request.filters}")
         
