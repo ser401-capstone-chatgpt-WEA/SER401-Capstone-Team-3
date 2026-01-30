@@ -1,7 +1,7 @@
 """
 FastAPI RAG service for PBS WARN alerts.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
@@ -24,6 +24,17 @@ app = FastAPI(
 # Initialize components
 retriever = AlertRetriever()
 generator = ResponseGenerator()
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """
+    Log incoming requests and their responses.
+    """
+    logging.info(f"Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    logging.info(f"Response status: {response.status_code}")
+    return response
 
 
 class QueryRequest(BaseModel):
@@ -57,6 +68,7 @@ async def query_rag(request: QueryRequest):
     """
     try:
         logging.info(f"Received query: {request.query}")
+        logging.info(f"Query parameters: top_k={request.top_k}, filters={request.filters}")
         
         # Retrieve relevant documents
         retrieved = retriever.retrieve(
@@ -64,12 +76,14 @@ async def query_rag(request: QueryRequest):
             top_k=request.top_k,
             filters=request.filters
         )
+        logging.info(f"Retrieved {len(retrieved)} documents")
         
         # Generate grounded response
         response = generator.generate(
             query=request.query,
             retrieved_docs=retrieved
         )
+        logging.info("Generated response successfully")
         
         return QueryResponse(**response)
         
