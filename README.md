@@ -5,6 +5,12 @@ docker compose -f docker/docker-compose.yml up -d
 ## RAG Service
 
 ### Run Locally
+Ensure that the Python path is setup properly for local imports
+```shell
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+```
+
+
 Run this in one session
 ```python
 python -m uvicorn rags.service:app --reload
@@ -14,4 +20,10 @@ Quick temp test that it's working (run in another session)
 curl -X POST http://localhost:8000/query \                        
   -H "Content-Type: application/json" \
   -d '{"query": "What severe weather alerts are active?", "top_k": 3}'
+```
+
+Run tests
+```shell
+# be in rags/ directory when running locally
+pytest -vv -rA --run-llm-tests --showlocals
 ```
