@@ -9,6 +9,7 @@ import re
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
+from rags.query_utils import preprocess_query
 
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -96,14 +97,17 @@ async def query_rag(request: QueryRequest):
         Grounded answer with source citations
     """
     try:
+        # Preprocess the query
+        processed_query = preprocess_query(request.query)
+        logging.info(f"Processed query: {processed_query}")
+
         # Validate the query
-        validate_query(request.query)
-        logging.info(f"Received query: {request.query}")
+        validate_query(processed_query)
         logging.info(f"Query parameters: top_k={request.top_k}, filters={request.filters}")
         
         # Retrieve relevant documents
         retrieved = retriever.retrieve(
-            query=request.query,
+            query=processed_query,
             top_k=request.top_k,
             filters=request.filters
         )
@@ -111,7 +115,7 @@ async def query_rag(request: QueryRequest):
         
         # Generate grounded response
         response = generator.generate(
-            query=request.query,
+            query=processed_query,
             retrieved_docs=retrieved
         )
         logging.info("Generated response successfully")
