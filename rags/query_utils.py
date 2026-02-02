@@ -2,7 +2,11 @@
 Utility functions for query preprocessing in the RAG pipeline.
 """
 import re
+from collections import deque
 from typing import List
+
+# In-memory query history (limited to the last 100 queries)
+query_history = deque(maxlen=100)
 
 def preprocess_query(query: str) -> str:
     """
@@ -24,6 +28,30 @@ def preprocess_query(query: str) -> str:
     query = re.sub(r"[^a-z0-9 .,?!'\"-]", "", query)
 
     return query
+
+def store_query_history(query: str, parameters: dict, response: dict):
+    """
+    Store a query and its result in the history.
+
+    Args:
+        query: The processed query string.
+        parameters: The query parameters (e.g., top_k, filters).
+        response: The response generated for the query.
+    """
+    query_history.append({
+        "query": query,
+        "parameters": parameters,
+        "response": response
+    })
+
+def get_query_history():
+    """
+    Retrieve the history of past queries and their results.
+
+    Returns:
+        List of past queries and their results.
+    """
+    return list(query_history)
 
 # Example usage
 if __name__ == "__main__":

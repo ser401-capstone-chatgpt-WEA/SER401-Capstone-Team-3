@@ -6,10 +6,11 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
 import re
+from collections import deque
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
-from rags.query_utils import preprocess_query
+from rags.query_utils import preprocess_query, store_query_history, get_query_history
 
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -27,6 +28,8 @@ app = FastAPI(
 retriever = AlertRetriever()
 generator = ResponseGenerator()
 
+# In-memory query history (limited to the last 100 queries)
+query_history = deque(maxlen=100)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -119,12 +122,33 @@ async def query_rag(request: QueryRequest):
             retrieved_docs=retrieved
         )
         logging.info("Generated response successfully")
+
+        # Store query and result in history
+        store_query_history(
+            query=processed_query,
+            parameters={
+                "top_k": request.top_k,
+                "filters": request.filters
+            },
+            response=response
+        )
         
         return QueryResponse(**response)
         
     except Exception as e:
         logging.error(f"Query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/history")
+async def get_query_history_endpoint():
+    """
+    Retrieve the history of past queries and their results.
+
+    Returns:
+        List of past queries and their results.
+    """
+    return get_query_history()
 
 
 @app.get("/health")
