@@ -27,3 +27,19 @@ Run tests
 # be in rags/ directory when running locally
 pytest -vv -rA --run-llm-tests --showlocals
 ```
+
+### Rag Container
+Run same command for starting services
+```shell
+docker compose -f docker/docker-compose.yml up -d
+```
+
+Go into container and run same local tests
+```shell
+# Exec into it (replace with actual name/container id)
+docker exec -it rag-1_id bash
+
+# Inside the container, test the API
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "test"}'
+```
