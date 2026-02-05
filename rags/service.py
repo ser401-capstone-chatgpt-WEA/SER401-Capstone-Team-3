@@ -157,21 +157,32 @@ async def health():
     Health check endpoint.
     
     Returns:
-        Service status and document count
+        Service status, document count, and component health
     """
     try:
+        # Check retriever database stats
         stats = retriever.db.get_collection_stats()
-        return {
-            "status": "healthy",
-            "documents_indexed": stats['document_count'],
-            "collection_name": retriever.db.collection_name
-        }
+        retriever_status = "healthy"
+    except Exception as e:
+        logging.error(f"Retriever health check error: {e}")
+        retriever_status = "unhealthy"
+
+    try:
+        # Check generator readiness
+        generator_status = generator.check_health()
     except Exception as e:
         logging.error(f"Health check error: {e}")
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        generator_status = "unhealthy"
+
+    overall_status = "healthy" if retriever_status == "healthy" and generator_status == "healthy" else "unhealthy"
+
+    return {
+        "status": overall_status,
+        "retriever_status": retriever_status,
+        "generator_status": generator_status,
+        "documents_indexed": stats['document_count'] if retriever_status == "healthy" else None,
+        "collection_name": retriever.db.collection_name if retriever_status == "healthy" else None
+    }
 
 
 @app.get("/")
