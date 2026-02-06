@@ -17,9 +17,10 @@ python -m uvicorn rags.service:app --reload
 ```
 Quick temp test that it's working (run in another session)
 ```shell
-curl -X POST http://localhost:8000/query \                        
+curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What severe weather alerts are active?", "top_k": 3}'
+  -d '{"query": "What severe weather alerts are active?", "top_k": 3}' \
+  | jq '.formatted_summary' -r
 ```
 
 Run tests
@@ -41,5 +42,11 @@ docker exec -it rag-1_id bash
 
 # Inside the container, test the API
 curl http://localhost:8000/health
-curl -X POST http://localhost:8000/query -H "Content-Type: application/json" -d '{"query": "test"}'
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What severe weather alerts are active?", "top_k": 3}' \
+  | jq '.formatted_summary' -r
+
+# Run tests
+python rags/test_service.py
 ```
