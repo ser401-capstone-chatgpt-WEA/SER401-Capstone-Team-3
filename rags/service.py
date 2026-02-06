@@ -46,6 +46,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="Natural language query about emergency alerts")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of documents to retrieve")
     filters: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata filters")
+    formatted: bool = Field(default=True, description="Return formatted summary instead of raw answer")
 
 
 class Source(BaseModel):
@@ -58,6 +59,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: List[Source]
     tokens_used: int = 0
+    formatted_summary: Optional[str] = None
 
 
 def validate_query(query: str):
@@ -123,6 +125,13 @@ async def query_rag(request: QueryRequest):
         )
         logging.info("Generated response successfully")
 
+        formatted_summary = format_response_summary(response, retrieved)
+        response["formatted_summary"] = formatted_summary
+
+        # Format the query if needed
+        if request.formatted:
+            response["answer"] = formatted_summary
+
         # Store query and result in history
         store_query_history(
             query=processed_query,
@@ -138,6 +147,26 @@ async def query_rag(request: QueryRequest):
     except Exception as e:
         logging.error(f"Query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def format_response_summary(response: dict, retrieved: list) -> str:
+    """Format a human-readable summary of the response."""
+    try:
+        lines = []
+        lines.append("="*80)
+        lines.append("RAG RESPONSE SUMMARY")
+        lines.append("="*80)
+        lines.append(f"\nAnswer:\n{response.get('answer', 'N/A')}\n")
+        lines.append(f"Sources ({len(response.get('sources', []))}):")
+        for idx, source in enumerate(response.get('sources', []), 1):
+            meta = source.get('metadata', {})
+            lines.append(f"  [{idx}] {meta.get('event', 'N/A')} - {meta.get('sender', 'N/A')} (score: {source.get('score', 0):.3f})")
+        lines.append(f"\nTokens Used: {response.get('tokens_used', 0)}")
+        lines.append("="*80)
+        return "\n".join(lines)
+    except Exception as e:
+        logging.error(f"Error formatting summary: {e}")
+        return "Error generating formatted summary."
 
 
 @app.get("/history")
