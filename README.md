@@ -10,6 +10,10 @@ Ensure that the Python path is setup properly for local imports
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 ```
 
+### Documentation
+
+- View Swagger UI: http://localhost:8000/docs
+- View ReDoc: http://localhost:8000/redoc
 
 Run this in one session
 ```python

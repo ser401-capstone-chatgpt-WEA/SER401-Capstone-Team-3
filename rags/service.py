@@ -1,5 +1,22 @@
 """
-FastAPI RAG service for PBS WARN alerts.
+FastAPI RAG Service for PBS WARN Alerts
+
+This module provides a REST API for querying PBS WARN emergency alert data using
+Retrieval-Augmented Generation (RAG). The service combines semantic search over
+indexed alerts with LLM-based response generation to answer natural language
+questions about emergency alerts.
+
+Architecture:
+- AlertRetriever: Performs semantic search against Chroma vector database
+- ResponseGenerator: Generates grounded responses using Google Gemini
+- Query validation and preprocessing for security and consistency
+- In-memory query history tracking (last 100 queries)
+
+Endpoints:
+- POST /query: Query alerts with natural language
+- GET /health: Service health check with component status
+- GET /history: Retrieve past query history
+- GET /: API information and endpoint documentation
 """
 from fastapi import FastAPI, HTTPException, Request, Query
 from pydantic import BaseModel, Field
@@ -34,7 +51,17 @@ query_history = deque(maxlen=100)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    Log incoming requests and their responses.
+    HTTP request/response logging middleware.
+    
+    Logs all incoming requests and their response status codes to help with
+    debugging and monitoring API usage.
+    
+    Args:
+        request: Incoming FastAPI request
+        call_next: Next middleware/handler in chain
+    
+    Returns:
+        Response from downstream handlers
     """
     logging.info(f"Incoming request: {request.method} {request.url}")
     response = await call_next(request)
@@ -43,6 +70,23 @@ async def log_requests(request: Request, call_next):
 
 
 class QueryRequest(BaseModel):
+    """
+    Request model for RAG query endpoint.
+    
+    Attributes:
+        query: Natural language question about emergency alerts
+        top_k: Number of relevant documents to retrieve (1-20, default: 5)
+        filters: Optional metadata filters (e.g., {"severity": "Severe"})
+        formatted: If True, returns human-readable summary instead of raw answer
+    
+    Example:
+        {
+            "query": "What severe weather alerts are active in Arizona?",
+            "top_k": 3,
+            "filters": {"severity": "Severe"},
+            "formatted": true
+        }
+    """
     query: str = Field(..., description="Natural language query about emergency alerts")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of documents to retrieve")
     filters: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata filters")
@@ -50,12 +94,40 @@ class QueryRequest(BaseModel):
 
 
 class Source(BaseModel):
+    """
+    Model for a single source document citation.
+    
+    Attributes:
+        id: Document identifier (typically CAP identifier)
+        score: Relevance score from vector similarity search (0.0-1.0)
+        metadata: Alert metadata including event, sender, severity, etc.
+    """
     id: str
     score: float
     metadata: Dict[str, Any]
 
 
 class QueryResponse(BaseModel):
+    """
+    Response model for RAG query endpoint.
+    
+    Attributes:
+        answer: Generated natural language response
+        sources: List of source documents used to ground the answer
+        tokens_used: Approximate LLM token count for generation
+        formatted_summary: Optional human-readable summary with citations
+    
+    Example:
+        {
+            "answer": "There are 2 active severe weather alerts...",
+            "sources": [
+                {"id": "abc123", "score": 0.95, "metadata": {...}},
+                {"id": "def456", "score": 0.88, "metadata": {...}}
+            ],
+            "tokens_used": 245,
+            "formatted_summary": "RAG RESPONSE SUMMARY\n..."
+        }
+    """
     answer: str
     sources: List[Source]
     tokens_used: int = 0
@@ -64,13 +136,24 @@ class QueryResponse(BaseModel):
 
 def validate_query(query: str):
     """
-    Validate the query string.
-
+    Validate and sanitize user query input.
+    
+    Performs multiple security and quality checks:
+    - Non-empty query
+    - Length constraints (3-1000 characters)
+    - SQL injection pattern detection
+    - Character whitelist enforcement
+    
     Args:
-        query: The query string to validate.
-
+        query: User-provided query string
+    
     Raises:
-        HTTPException: If the query is invalid.
+        HTTPException: 400 error with specific validation failure message
+    
+    Security Notes:
+        - Blocks common SQL injection patterns (DROP TABLE, --, ;)
+        - Restricts to alphanumeric and basic punctuation
+        - Case-insensitive pattern matching
     """
     if not query or len(query.strip()) == 0:
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
@@ -93,13 +176,44 @@ def validate_query(query: str):
 @app.post("/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
     """
-    Query the RAG system for alert information.
+    Query the RAG system for emergency alert information.
+    
+    This endpoint performs a multi-step RAG pipeline:
+    1. Preprocesses and validates the query
+    2. Retrieves semantically relevant alert documents from Chroma
+    3. Generates a grounded response using Google Gemini
+    4. Stores query/response in history for analytics
     
     Args:
-        request: Query request with natural language question
+        request: QueryRequest containing query text, top_k, filters, and formatting options
     
     Returns:
-        Grounded answer with source citations
+        QueryResponse with generated answer, source citations, token usage, and optional formatted summary
+    
+    Raises:
+        HTTPException: 
+            - 400 for invalid query format
+            - 500 for internal processing errors
+    
+    Example:
+        POST /query
+        {
+            "query": "Are there any tornado warnings near Phoenix?",
+            "top_k": 5,
+            "filters": {"severity": "Severe"}
+        }
+        
+        Response:
+        {
+            "answer": "Yes, there is 1 active tornado warning...",
+            "sources": [...],
+            "tokens_used": 234
+        }
+    
+    Notes:
+        - All queries are logged to pbs_warn_scraper.log
+        - Query history is stored in-memory (last 100 queries)
+        - Filters apply to alert metadata (severity, urgency, event, sender, etc.)
     """
     try:
         # Preprocess the query
@@ -150,7 +264,41 @@ async def query_rag(request: QueryRequest):
 
 
 def format_response_summary(response: dict, retrieved: list) -> str:
-    """Format a human-readable summary of the response."""
+    """
+    Format RAG response into human-readable summary.
+    
+    Creates a structured text summary including:
+    - Generated answer text
+    - Source document citations with relevance scores
+    - Token usage statistics
+    
+    Args:
+        response: Generator response dict with answer, sources, tokens_used
+        retrieved: List of retrieved documents (unused but kept for compatibility)
+    
+    Returns:
+        Multi-line formatted string with bordered sections
+    
+    Format:
+        ================================================================================
+        RAG RESPONSE SUMMARY
+        ================================================================================
+        
+        Answer:
+        [Generated response text]
+        
+        Sources (N):
+          [1] Event Name - Sender (score: 0.xxx)
+          [2] Event Name - Sender (score: 0.xxx)
+          ...
+        
+        Tokens Used: XXX
+        ================================================================================
+    
+    Notes:
+        - Returns error message if formatting fails (graceful degradation)
+        - Scores are 3 decimal places for readability
+    """
     try:
         lines = []
         lines.append("="*80)
@@ -172,10 +320,28 @@ def format_response_summary(response: dict, retrieved: list) -> str:
 @app.get("/history")
 async def get_query_history_endpoint():
     """
-    Retrieve the history of past queries and their results.
-
+    Retrieve recent query history.
+    
+    Returns the last 100 queries and their results for analytics and debugging.
+    History is stored in-memory and lost on service restart.
+    
     Returns:
-        List of past queries and their results.
+        List[Dict]: Query history with query text, parameters, and responses
+    
+    Example Response:
+        [
+            {
+                "query": "what severe weather alerts are active",
+                "parameters": {"top_k": 5, "filters": null},
+                "response": {"answer": "...", "sources": [...]}
+            },
+            ...
+        ]
+    
+    Notes:
+        - Limited to 100 most recent queries (FIFO queue)
+        - Useful for monitoring popular queries and system usage
+        - Consider adding authentication for production deployments
     """
     return get_query_history()
 
@@ -183,10 +349,35 @@ async def get_query_history_endpoint():
 @app.get("/health")
 async def health():
     """
-    Health check endpoint.
+    Service health check endpoint.
+    
+    Checks health of all RAG system components:
+    - AlertRetriever: Database connectivity and document count
+    - ResponseGenerator: LLM API availability
     
     Returns:
-        Service status, document count, and component health
+        Dict with component statuses and database statistics
+    
+    Example Response:
+        {
+            "status": "healthy",
+            "retriever_status": "healthy",
+            "generator_status": "healthy",
+            "documents_indexed": 1523,
+            "collection_name": "pbs_warn_alerts"
+        }
+    
+    Status Values:
+        - "healthy": All components operational
+        - "unhealthy": One or more components failed health check
+    
+    HTTP Status:
+        - Always returns 200 (use response body to check actual health)
+    
+    Notes:
+        - Component failures are logged to pbs_warn_scraper.log
+        - Monitor this endpoint for production alerting
+        - Check documents_indexed to ensure ingestion is working
     """
     try:
         # Check retriever database stats
@@ -216,15 +407,64 @@ async def health():
 
 @app.get("/")
 async def root():
-    """Root endpoint with service information."""
+    """
+    Root endpoint with API information.
+    
+    Provides service metadata and available endpoint documentation for API discovery.
+    
+    Returns:
+        Dict with service name, version, and endpoint list
+    
+    Example Response:
+        {
+            "service": "PBS WARN RAG API",
+            "version": "1.0.0",
+            "endpoints": {
+                "query": "/query (POST)",
+                "health": "/health (GET)",
+                "docs": "/docs (GET)"
+            }
+        }
+    
+    Notes:
+        - Visit /docs for interactive Swagger UI documentation
+        - Visit /redoc for ReDoc-style documentation
+    """
     return {
         "service": "PBS WARN RAG API",
         "version": "1.0.0",
+        "description": "Retrieval-Augmented Generation service for emergency alerts",
         "endpoints": {
-            "query": "/query (POST)",
-            "health": "/health (GET)",
-            "docs": "/docs (GET)"
-        }
+            "query": {
+                "path": "/query",
+                "method": "POST",
+                "description": "Query the RAG system for alert information"
+            },
+            "health": {
+                "path": "/health",
+                "method": "GET",
+                "description": "Check service health status"
+            },
+            "history": {
+                "path": "/history",
+                "method": "GET",
+                "description": "Retrieve recent query history"
+            },
+            "docs": {
+                "path": "/docs",
+                "method": "GET",
+                "description": "Interactive API documentation (Swagger UI)"
+            },
+            "redoc": {
+                "path": "/redoc",
+                "method": "GET",
+                "description": "Alternative API documentation (ReDoc)"
+            }
+        },
+        "data_source": "PBS WARN API",
+        "vector_database": "ChromaDB",
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "llm_provider": "Google Gemini"
     }
 
 
