@@ -19,10 +19,12 @@ Endpoints:
 - GET /: API information and endpoint documentation
 """
 from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
 import re
+import uuid
 from collections import deque
 
 from rags.retriever import AlertRetriever
@@ -51,21 +53,24 @@ query_history = deque(maxlen=100)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    HTTP request/response logging middleware.
+    HTTP request/response logging middleware with request ID tracking.
     
-    Logs all incoming requests and their response status codes to help with
-    debugging and monitoring API usage.
+    Generates a unique request ID for each incoming request and includes it
+    in logs and response headers for easier debugging and tracing.
     
     Args:
         request: Incoming FastAPI request
         call_next: Next middleware/handler in chain
     
     Returns:
-        Response from downstream handlers
+        Response from downstream handlers with X-Request-ID header
     """
-    logging.info(f"Incoming request: {request.method} {request.url}")
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    logging.info(f"[{request_id}] Incoming request: {request.method} {request.url}")
     response = await call_next(request)
-    logging.info(f"Response status: {response.status_code}")
+    response.headers["X-Request-ID"] = request_id
+    logging.info(f"[{request_id}] Response status: {response.status_code}")
     return response
 
 
@@ -174,7 +179,7 @@ def validate_query(query: str):
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query_rag(request: QueryRequest):
+async def query_rag(request: QueryRequest, http_request: Request):
     """
     Query the RAG system for emergency alert information.
     
@@ -186,6 +191,7 @@ async def query_rag(request: QueryRequest):
     
     Args:
         request: QueryRequest containing query text, top_k, filters, and formatting options
+        http_request: FastAPI Request object for accessing request ID
     
     Returns:
         QueryResponse with generated answer, source citations, token usage, and optional formatted summary
@@ -211,18 +217,19 @@ async def query_rag(request: QueryRequest):
         }
     
     Notes:
-        - All queries are logged to pbs_warn_scraper.log
+        - All queries are logged to pbs_warn_scraper.log with request ID
         - Query history is stored in-memory (last 100 queries)
         - Filters apply to alert metadata (severity, urgency, event, sender, etc.)
     """
+    request_id = getattr(http_request.state, 'request_id', 'unknown')
     try:
         # Preprocess the query
         processed_query = preprocess_query(request.query)
-        logging.info(f"Processed query: {processed_query}")
+        logging.info(f"[{request_id}] Processed query: {processed_query}")
 
         # Validate the query
         validate_query(processed_query)
-        logging.info(f"Query parameters: top_k={request.top_k}, filters={request.filters}")
+        logging.info(f"[{request_id}] Query parameters: top_k={request.top_k}, filters={request.filters}")
         
         # Retrieve relevant documents
         retrieved = retriever.retrieve(
@@ -230,14 +237,14 @@ async def query_rag(request: QueryRequest):
             top_k=request.top_k,
             filters=request.filters
         )
-        logging.info(f"Retrieved {len(retrieved)} documents")
+        logging.info(f"[{request_id}] Retrieved {len(retrieved)} documents")
         
         # Generate grounded response
         response = generator.generate(
             query=processed_query,
             retrieved_docs=retrieved
         )
-        logging.info("Generated response successfully")
+        logging.info(f"[{request_id}] Generated response successfully")
 
         formatted_summary = format_response_summary(response, retrieved)
         response["formatted_summary"] = formatted_summary
@@ -259,7 +266,7 @@ async def query_rag(request: QueryRequest):
         return QueryResponse(**response)
         
     except Exception as e:
-        logging.error(f"Query error: {e}")
+        logging.error(f"[{request_id}] Query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
