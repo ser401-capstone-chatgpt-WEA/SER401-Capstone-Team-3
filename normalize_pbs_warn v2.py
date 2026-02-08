@@ -100,26 +100,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "input",
-        nargs="?",
-        default="-",
-        help="Path to input JSON file (default: stdin if '-')",
+        help="Path to input JSON file",
     )
     parser.add_argument(
         "-o",
         "--output",
-        default="-",
-        help="Path to output JSON file (default: stdout if '-')",
+        default="pbs_warn_cleaned.json",
+        help="Path to output JSON file (default: pbs_warn_cleaned.json)",
     )
     return parser
 
 def open_input(path: str):
-    if path == "-" or path == "/dev/stdin":
-        return sys.stdin
     return open(path, "r", encoding="utf-8")
 
 def open_output(path: str):
-    if path == "-" or path == "/dev/stdout":
-        return sys.stdout
     return open(path, "w", encoding="utf-8")
 
 def main():
