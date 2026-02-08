@@ -6,9 +6,9 @@ Requirements
 
 Installation
 - Donwload 'normalize_pbs_warn.py' and install it into a folder
-- Move the desired files to be converted into the folder, named 'pbs_warn_raw.json' (this name can be changed by adjusting the script)
-- Open command line within the folder, and run 'python normalize_pbs_warn.py'
-- Open up the newly created 'pbs_warn_cleaned.json' for use as the final output
+- Move the desired files to be converted into the folder
+- Open command line within the folder, and run 'python normalize_pbs_warn_v2.py [target file].json', replacing [target file] with the desired file to edit
+- Open up the newly created file for use as the final output
 
 Example Input:
 {
