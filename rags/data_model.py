@@ -8,6 +8,7 @@ into the Chroma vector database.
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
@@ -15,8 +16,11 @@ from geopy.distance import geodesic
 
 from mcp_server import now_utc_iso
 
+# Configure logging to use absolute path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_file_path = os.path.join(project_root, 'pbs_warn_scraper.log')
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=log_file_path,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )

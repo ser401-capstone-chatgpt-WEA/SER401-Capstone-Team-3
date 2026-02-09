@@ -13,14 +13,16 @@ from typing import List
 from chroma_setup import ChromaDBManager
 from rags.data_model import batch_map_alerts
 
+# Configure logging to use absolute path
+log_file_path = Path(__file__).resolve().parent.parent / 'pbs_warn_scraper.log'
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=str(log_file_path),
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 DEFAULT_INPUT_FOLDER = './pbs_warn_outputs'
-DEFAULT_CHROMA_PATH = './chroma_db'
+DEFAULT_CHROMA_PATH = str(Path(__file__).resolve().parent.parent / 'chroma_db')
 
 
 def load_alerts_from_file(file_path: Path) -> List[dict]:
