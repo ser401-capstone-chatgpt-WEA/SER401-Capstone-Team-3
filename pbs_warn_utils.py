@@ -6,7 +6,8 @@ from pathlib import Path
 
 # setup basic logging to track progress and errors
 def setup_logging():
-    logging.basicConfig(filename='pbs_warn_scraper.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    log_file_path = Path(__file__).resolve().parent / 'pbs_warn_scraper.log'
+    logging.basicConfig(filename=str(log_file_path), level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # scan html for emergency alert keywords to confirm relevant content
 def check_for_alert_keywords(html):
