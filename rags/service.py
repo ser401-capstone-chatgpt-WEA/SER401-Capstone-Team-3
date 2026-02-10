@@ -30,6 +30,13 @@ from collections import deque
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
 from rags.query_utils import preprocess_query, store_query_history, get_query_history
+from rags.exceptions import (
+    RAGServiceError,
+    QueryValidationError,
+    RetrieverError,
+    GeneratorError,
+    rag_exception_to_http
+)
 
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -49,6 +56,27 @@ generator = ResponseGenerator()
 
 # In-memory query history (limited to the last 100 queries)
 query_history = deque(maxlen=100)
+
+
+@app.exception_handler(RAGServiceError)
+async def rag_service_error_handler(request: Request, exc: RAGServiceError):
+    """
+    Global exception handler for RAG service errors.
+    
+    Converts custom RAGServiceError exceptions to appropriate HTTP responses
+    with consistent error formatting.
+    """
+    request_id = getattr(request.state, 'request_id', 'unknown')
+    logging.error(f"[{request_id}] {exc.__class__.__name__}: {exc.message}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.__class__.__name__,
+            "detail": exc.message,
+            "request_id": request_id
+        }
+    )
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -153,7 +181,7 @@ def validate_query(query: str):
         query: User-provided query string
     
     Raises:
-        HTTPException: 400 error with specific validation failure message
+        QueryValidationError: With specific validation failure message
     
     Security Notes:
         - Blocks common SQL injection patterns (DROP TABLE, --, ;)
@@ -161,21 +189,21 @@ def validate_query(query: str):
         - Case-insensitive pattern matching
     """
     if not query or len(query.strip()) == 0:
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+        raise QueryValidationError("Query cannot be empty.")
     if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query exceeds maximum length of 1,000 characters.")
+        raise QueryValidationError("Query exceeds maximum length of 1,000 characters.")
     if len(query) < 3:
-        raise HTTPException(status_code=400, detail="Query must be at least 3 characters long.")
+        raise QueryValidationError("Query must be at least 3 characters long.")
 
     # Check for prohibited characters or patterns
     prohibited_patterns = [r"DROP TABLE", r"--", r";"]
     for pattern in prohibited_patterns:
         if re.search(pattern, query, re.IGNORECASE):
-            raise HTTPException(status_code=400, detail="Query contains prohibited patterns or characters.")
+            raise QueryValidationError("Query contains prohibited patterns or characters.")
 
     # Ensure query contains only allowed characters
     if not re.match(r"^[a-zA-Z0-9 .,?!'\"-]+$", query):
-        raise HTTPException(status_code=400, detail="Query contains unsupported characters.")
+        raise QueryValidationError("Query contains unsupported characters.")
 
 
 @app.post("/query", response_model=QueryResponse)
