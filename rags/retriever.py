@@ -2,11 +2,15 @@
 Semantic retrieval wrapper for PBS WARN RAG system.
 """
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from chroma_setup import ChromaDBManager
 
+# Configure logging to use absolute path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_file_path = os.path.join(project_root, 'pbs_warn_scraper.log')
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=log_file_path,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -18,7 +22,7 @@ class AlertRetriever:
     
     def __init__(
         self,
-        chroma_path: str = "./chroma_db",
+        chroma_path: str = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chroma_db"),
         collection_name: str = "pbs_warn_alerts"
     ):
         self.db = ChromaDBManager(
