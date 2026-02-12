@@ -8,8 +8,11 @@ from typing import List, Dict, Any
 from google import genai
 from google.genai import types
 
+# Configure logging to use absolute path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_file_path = os.path.join(project_root, 'pbs_warn_scraper.log')
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=log_file_path,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
