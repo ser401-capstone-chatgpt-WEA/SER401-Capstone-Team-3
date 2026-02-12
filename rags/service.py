@@ -25,6 +25,7 @@ from typing import Optional, Dict, Any, List
 import logging
 import re
 import uuid
+import time
 from collections import deque
 
 from rags.retriever import AlertRetriever
@@ -35,6 +36,7 @@ from rags.exceptions import (
     QueryValidationError,
     RetrieverError,
     GeneratorError,
+    RateLimitExceededError,
     rag_exception_to_http
 )
 
@@ -56,6 +58,11 @@ generator = ResponseGenerator()
 
 # In-memory query history (limited to the last 100 queries)
 query_history = deque(maxlen=100)
+
+# Rate limiting configuration
+RATE_LIMIT_REQUESTS = 60  # Max requests per window
+RATE_LIMIT_WINDOW = 60    # Window size in seconds
+rate_limit_store: Dict[str, List[float]] = {}  # IP -> list of request timestamps
 
 
 @app.exception_handler(RAGServiceError)
@@ -100,6 +107,75 @@ async def log_requests(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     logging.info(f"[{request_id}] Response status: {response.status_code}")
     return response
+
+
+def check_rate_limit(client_ip: str) -> bool:
+    """
+    Check if a client has exceeded the rate limit.
+    
+    Uses a sliding window algorithm to track requests per client IP.
+    
+    Args:
+        client_ip: The client's IP address
+    
+    Returns:
+        True if within rate limit, False if exceeded
+    """
+    current_time = time.time()
+    window_start = current_time - RATE_LIMIT_WINDOW
+    
+    # Initialize or get existing timestamps
+    if client_ip not in rate_limit_store:
+        rate_limit_store[client_ip] = []
+    
+    # Remove timestamps outside the current window
+    rate_limit_store[client_ip] = [
+        ts for ts in rate_limit_store[client_ip] if ts > window_start
+    ]
+    
+    # Check if within limit
+    if len(rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        return False
+    
+    # Add current request timestamp
+    rate_limit_store[client_ip].append(current_time)
+    return True
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Rate limiting middleware for the /query endpoint.
+    
+    Limits requests to RATE_LIMIT_REQUESTS per RATE_LIMIT_WINDOW seconds per client IP.
+    Only applies to POST requests to /query endpoint.
+    
+    Args:
+        request: Incoming FastAPI request
+        call_next: Next middleware/handler in chain
+    
+    Returns:
+        Response or 429 error if rate limit exceeded
+    """
+    # Only rate limit the /query endpoint
+    if request.method == "POST" and request.url.path == "/query":
+        client_ip = request.client.host if request.client else "unknown"
+        
+        if not check_rate_limit(client_ip):
+            request_id = getattr(request.state, 'request_id', 'unknown')
+            logging.warning(f"[{request_id}] Rate limit exceeded for {client_ip}")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "RateLimitExceededError",
+                    "detail": f"Rate limit exceeded. Maximum {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds.",
+                    "request_id": request_id,
+                    "retry_after": RATE_LIMIT_WINDOW
+                },
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW)}
+            )
+    
+    return await call_next(request)
 
 
 class QueryRequest(BaseModel):
