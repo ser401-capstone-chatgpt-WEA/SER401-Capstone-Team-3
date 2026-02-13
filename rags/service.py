@@ -5,12 +5,16 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
+import os
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
 
+# Configure logging to use absolute path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_file_path = os.path.join(project_root, 'pbs_warn_scraper.log')
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=log_file_path,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
