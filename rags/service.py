@@ -64,6 +64,71 @@ RATE_LIMIT_REQUESTS = 60  # Max requests per window
 RATE_LIMIT_WINDOW = 60    # Window size in seconds
 rate_limit_store: Dict[str, List[float]] = {}  # IP -> list of request timestamps
 
+# Query cache configuration
+CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
+CACHE_MAX_SIZE = 100  # Maximum number of cached queries
+query_cache: Dict[str, Dict[str, Any]] = {}  # query_hash -> {response, timestamp}
+
+
+def get_cache_key(query: str, top_k: int, filters: Optional[Dict]) -> str:
+    """
+    Generate a cache key from query parameters.
+    
+    Args:
+        query: The processed query string
+        top_k: Number of documents to retrieve
+        filters: Optional metadata filters
+    
+    Returns:
+        A unique string key for the query
+    """
+    import hashlib
+    import json
+    filter_str = json.dumps(filters, sort_keys=True) if filters else ""
+    key_str = f"{query}:{top_k}:{filter_str}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a cached response if it exists and hasn't expired.
+    
+    Args:
+        cache_key: The cache key to look up
+    
+    Returns:
+        Cached response dict or None if not found/expired
+    """
+    if cache_key in query_cache:
+        cached = query_cache[cache_key]
+        if time.time() - cached['timestamp'] < CACHE_TTL:
+            return cached['response']
+        else:
+            # Remove expired entry
+            del query_cache[cache_key]
+    return None
+
+
+def store_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
+    """
+    Store a response in the cache.
+    
+    Implements LRU-style eviction when cache is full.
+    
+    Args:
+        cache_key: The cache key
+        response: The response to cache
+    """
+    # Evict oldest entries if cache is full
+    if len(query_cache) >= CACHE_MAX_SIZE:
+        oldest_key = min(query_cache.keys(), key=lambda k: query_cache[k]['timestamp'])
+        del query_cache[oldest_key]
+    
+    query_cache[cache_key] = {
+        'response': response,
+        'timestamp': time.time()
+    }
+
 
 @app.exception_handler(RAGServiceError)
 async def rag_service_error_handler(request: Request, exc: RAGServiceError):
@@ -324,6 +389,7 @@ async def query_rag(request: QueryRequest, http_request: Request):
         - All queries are logged to pbs_warn_scraper.log with request ID
         - Query history is stored in-memory (last 100 queries)
         - Filters apply to alert metadata (severity, urgency, event, sender, etc.)
+        - Responses are cached for CACHE_TTL seconds to reduce redundant lookups
     """
     request_id = getattr(http_request.state, 'request_id', 'unknown')
     try:
@@ -334,6 +400,15 @@ async def query_rag(request: QueryRequest, http_request: Request):
         # Validate the query
         validate_query(processed_query)
         logging.info(f"[{request_id}] Query parameters: top_k={request.top_k}, filters={request.filters}")
+        
+        # Check cache first
+        cache_key = get_cache_key(processed_query, request.top_k, request.filters)
+        cached_response = get_cached_response(cache_key)
+        if cached_response:
+            logging.info(f"[{request_id}] Cache hit for query")
+            return QueryResponse(**cached_response)
+        
+        logging.info(f"[{request_id}] Cache miss, querying RAG system")
         
         # Retrieve relevant documents
         retrieved = retriever.retrieve(
@@ -356,6 +431,10 @@ async def query_rag(request: QueryRequest, http_request: Request):
         # Format the query if needed
         if request.formatted:
             response["answer"] = formatted_summary
+        
+        # Store in cache
+        store_cached_response(cache_key, response)
+        logging.info(f"[{request_id}] Response cached")
 
         # Store query and result in history
         store_query_history(
