@@ -18,8 +18,9 @@ from alert_compare import compare_and_report_alerts
 from alert_summary_report import generate_report_from_file
 
 # Configure logging
+log_file_path = Path(__file__).resolve().parent / 'pbs_warn_scraper.log'
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=str(log_file_path),
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
