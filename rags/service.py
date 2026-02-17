@@ -69,6 +69,16 @@ CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
 CACHE_MAX_SIZE = 100  # Maximum number of cached queries
 query_cache: Dict[str, Dict[str, Any]] = {}  # query_hash -> {response, timestamp}
 
+# Metrics tracking
+metrics = {
+    "total_queries": 0,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "total_errors": 0,
+    "total_response_time_ms": 0.0,
+    "service_start_time": time.time()
+}
+
 
 def get_cache_key(query: str, top_k: int, filters: Optional[Dict]) -> str:
     """
@@ -392,6 +402,9 @@ async def query_rag(request: QueryRequest, http_request: Request):
         - Responses are cached for CACHE_TTL seconds to reduce redundant lookups
     """
     request_id = getattr(http_request.state, 'request_id', 'unknown')
+    start_time = time.time()
+    metrics["total_queries"] += 1
+    
     try:
         # Preprocess the query
         processed_query = preprocess_query(request.query)
@@ -406,8 +419,12 @@ async def query_rag(request: QueryRequest, http_request: Request):
         cached_response = get_cached_response(cache_key)
         if cached_response:
             logging.info(f"[{request_id}] Cache hit for query")
+            metrics["cache_hits"] += 1
+            elapsed_ms = (time.time() - start_time) * 1000
+            metrics["total_response_time_ms"] += elapsed_ms
             return QueryResponse(**cached_response)
         
+        metrics["cache_misses"] += 1
         logging.info(f"[{request_id}] Cache miss, querying RAG system")
         
         # Retrieve relevant documents
@@ -446,9 +463,14 @@ async def query_rag(request: QueryRequest, http_request: Request):
             response=response
         )
         
+        # Track response time
+        elapsed_ms = (time.time() - start_time) * 1000
+        metrics["total_response_time_ms"] += elapsed_ms
+        
         return QueryResponse(**response)
         
     except Exception as e:
+        metrics["total_errors"] += 1
         logging.error(f"[{request_id}] Query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -534,6 +556,63 @@ async def get_query_history_endpoint():
         - Consider adding authentication for production deployments
     """
     return get_query_history()
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Retrieve service usage metrics.
+    
+    Returns statistics about service usage including query counts,
+    cache performance, error rates, and response times.
+    
+    Returns:
+        Dict containing usage metrics and calculated statistics
+    
+    Example Response:
+        {
+            "total_queries": 1523,
+            "cache_hits": 892,
+            "cache_misses": 631,
+            "cache_hit_rate": 0.585,
+            "total_errors": 12,
+            "error_rate": 0.008,
+            "average_response_time_ms": 245.3,
+            "uptime_seconds": 86400,
+            "current_cache_size": 87,
+            "rate_limit_config": {
+                "requests_per_window": 60,
+                "window_seconds": 60
+            }
+        }
+    
+    Notes:
+        - Metrics are reset on service restart
+        - Cache hit rate = cache_hits / total_queries
+        - Error rate = total_errors / total_queries
+        - Average response time includes both cache hits and misses
+    """
+    total_queries = metrics["total_queries"]
+    cache_hit_rate = metrics["cache_hits"] / total_queries if total_queries > 0 else 0
+    error_rate = metrics["total_errors"] / total_queries if total_queries > 0 else 0
+    avg_response_time = metrics["total_response_time_ms"] / total_queries if total_queries > 0 else 0
+    uptime = time.time() - metrics["service_start_time"]
+    
+    return {
+        "total_queries": total_queries,
+        "cache_hits": metrics["cache_hits"],
+        "cache_misses": metrics["cache_misses"],
+        "cache_hit_rate": round(cache_hit_rate, 3),
+        "total_errors": metrics["total_errors"],
+        "error_rate": round(error_rate, 3),
+        "average_response_time_ms": round(avg_response_time, 1),
+        "uptime_seconds": round(uptime, 0),
+        "current_cache_size": len(query_cache),
+        "rate_limit_config": {
+            "requests_per_window": RATE_LIMIT_REQUESTS,
+            "window_seconds": RATE_LIMIT_WINDOW
+        }
+    }
 
 
 @app.get("/health")
@@ -639,6 +718,11 @@ async def root():
                 "path": "/history",
                 "method": "GET",
                 "description": "Retrieve recent query history"
+            },
+            "metrics": {
+                "path": "/metrics",
+                "method": "GET",
+                "description": "Retrieve service usage metrics and statistics"
             },
             "docs": {
                 "path": "/docs",
