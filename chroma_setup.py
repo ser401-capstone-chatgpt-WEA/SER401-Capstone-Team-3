@@ -7,6 +7,7 @@ In the future, this can be adapted to use OpenAI API for embeddings.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -15,14 +16,15 @@ from chromadb.config import Settings
 from chromadb.utils import embedding_functions
 
 # Configure logging following existing conventions
+log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pbs_warn_scraper.log')
 logging.basicConfig(
-    filename='pbs_warn_scraper.log',
+    filename=log_file_path,
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 # Configuration
-DEFAULT_CHROMA_PATH = "./chroma_db"
+DEFAULT_CHROMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
 DEFAULT_COLLECTION_NAME = "pbs_warn_alerts"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -68,15 +70,14 @@ class ChromaDBManager:
         logging.info(f"Initialized ChromaDB at {self.persist_directory}")
     
     def _initialize_client(self) -> chromadb.Client:
-        """Initialize Chroma client with persistence."""
+        """Initialize Chroma client with persistence (compat with 0.3.x)."""
         try:
-            client = chromadb.PersistentClient(
-                path=str(self.persist_directory),
-                settings=Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True
-                )
-            )
+            # For chromadb 0.3.x
+            client = chromadb.Client(Settings(
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=str(self.persist_directory),
+                anonymized_telemetry=False
+            ))
             logging.info("Chroma client initialized successfully")
             return client
         except Exception as e:
