@@ -106,14 +106,163 @@ class AlertCleanupService:
             return []
     
     def delete_expired_alerts(self, alert_ids: List[str]) -> int:
-        pass # TODO - query ChromaDB for alerts
+        """
+        Delete specified alerts from ChromaDB.
+
+        Args:
+            alert_ids: List of document IDs to delete
+
+        Returns:
+            Number of alerts successfully deleted
+
+        Notes:
+            - Uses ChromaDB's collection.delete() method
+            - Logs each deletion operation for audit trail
+            - Continues on error to delete as many as possible
+        """
+        if not alert_ids:
+            logging.info("No alerts to delete")
+            return 0
+
+        try:
+            logging.info(f"Deleting {len(alert_ids)} expired alerts from collection '{self.collection_name}'")
+            
+            # ChromaDB delete operation
+            self.db.collection.delete(ids=alert_ids)
+            
+            deleted_count = len(alert_ids)
+            logging.info(f"Successfully deleted {deleted_count} alerts from collection '{self.collection_name}'")
+            
+            return deleted_count
+
+        except Exception as e:
+            logging.error(f"Error deleting expired alerts: {e}", exc_info=True)
+            return 0
     
     def run_cleanup(self) -> Dict[str, Any]:
-        pass # TODO - run full cleanup
+        """
+        Execute full cleanup cycle: find and delete expired alerts.
+        
+        This is the main entry point for scheduled cleanup jobs. It performs
+        the complete cleanup workflow and returns execution metrics.
+        
+        Returns:
+            Dict with cleanup metrics:
+                - removed_count: Number of alerts deleted
+                - execution_time_ms: Time taken for cleanup (milliseconds)
+                - timestamp: ISO timestamp of cleanup execution
+                - status: "success" or "error"
+        
+        Example Response:
+            {
+                "removed_count": 42,
+                "execution_time_ms": 347.2,
+                "timestamp": "2025-01-15T14:00:00Z",
+                "status": "success"
+            }
+        
+        Notes:
+            - Execution time includes both query and deletion operations
+            - Logs start, progress, and completion to pbs_warn_scraper.log
+            - Returns partial success if some deletes fail
+        """
+        start_time = time.time()
+        timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        logging.info("="*80)
+        logging.info("Starting scheduled alert cleanup")
+        logging.info(f"Cleanup timestamp: {timestamp}")
+        
+        try:
+            # Find expired alerts
+            expired_ids = self.find_expired_alerts()
+            
+            if not expired_ids:
+                execution_time_ms = (time.time() - start_time) * 1000
+                logging.info(f"Cleanup completed in {execution_time_ms:.2f}ms (no expired alerts found)")
+                logging.info("="*80)
+                
+                return {
+                    "removed_count": 0,
+                    "execution_time_ms": round(execution_time_ms, 2),
+                    "timestamp": timestamp,
+                    "status": "success"
+                }
+            
+            # Delete expired alerts
+            removed_count = self.delete_expired_alerts(expired_ids)
+            
+            # Calculate execution time
+            execution_time_ms = (time.time() - start_time) * 1000
+            
+            # Log completion summary
+            logging.info(f"Cleanup completed in {execution_time_ms:.2f}ms ({removed_count} removed)")
+            logging.info("="*80)
+            
+            return {
+                "removed_count": removed_count,
+                "execution_time_ms": round(execution_time_ms, 2),
+                "timestamp": timestamp,
+                "status": "success"
+            }
+        
+        except Exception as e:
+            execution_time_ms = (time.time() - start_time) * 1000
+            logging.error(f"Cleanup failed after {execution_time_ms:.2f}ms: {e}", exc_info=True)
+            logging.info("="*80)
+            
+            return {
+                "removed_count": 0,
+                "execution_time_ms": round(execution_time_ms, 2),
+                "timestamp": timestamp,
+                "status": "error",
+                "error": str(e)
+            }
 
 
 def main():
-    pass
+    """
+    Standalone cleanup execution for manual testing.
+    
+    Usage:
+        python rags/cleanup.py
+    """
+    try:
+        service = AlertCleanupService()
+        
+        print("\n" + "="*80)
+        print("PBS WARN Alert Cleanup Service")
+        print("="*80)
+        print(f"Collection: {service.collection_name}")
+        print(f"Database: {service.db.persist_directory}")
+        print("="*80)
+        
+        # Run cleanup
+        metrics = service.run_cleanup()
+        
+        # Print results
+        print("\nCleanup Results:")
+        print(f"  Status: {metrics['status']}")
+        print(f"  Removed: {metrics['removed_count']} alerts")
+        print(f"  Execution Time: {metrics['execution_time_ms']:.2f}ms")
+        print(f"  Timestamp: {metrics['timestamp']}")
+        
+        if metrics['status'] == 'error':
+            print(f"  Error: {metrics.get('error', 'Unknown error')}")
+        
+        print("="*80)
+        
+        # Print updated collection stats
+        stats = service.db.get_collection_stats()
+        print("\nCollection Statistics:")
+        print(f"  Documents Remaining: {stats['document_count']}")
+        print("="*80)
+    
+    except Exception as e:
+        logging.error(f"Error in main: {e}", exc_info=True)
+        print(f"Error: {e}")
+        raise
+
 
 if __name__ == "__main__":
     main()
