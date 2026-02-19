@@ -8,15 +8,48 @@ import json
 import os
 import math
 import datetime
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
+
+# Load environment variables
+load_dotenv()
+
+# RAG Imports
+try:
+    from rags.retriever import AlertRetriever
+    from rags.generator import ResponseGenerator
+    RAG_AVAILABLE = True
+except ImportError as e:
+    print(f"DEBUG: Failed to import RAG modules: {e}")
+    RAG_AVAILABLE = False
 
 ALERT_FILE = os.getenv("ALERT_FILE", "./data/cleaned_alerts.json")
 
 # -------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------
+# Global RAG components (lazy loaded)
+_retriever = None
+_generator = None
+
+def get_rag_components():
+    """Lazy load RAG components to avoid startup overhead/errors if not configured."""
+    global _retriever, _generator
+    if not RAG_AVAILABLE:
+        raise ImportError("RAG modules not available. Check dependencies.")
+        
+    if _retriever is None:
+        # Defaults to ./chroma_db
+        _retriever = AlertRetriever()
+    
+    if _generator is None:
+        # Requires GEMINI_API_KEY
+        _generator = ResponseGenerator()
+        
+    return _retriever, _generator
+
 def load_alerts():
     """Load alerts from JSON file."""
     if not os.path.exists(ALERT_FILE):
@@ -91,6 +124,17 @@ async def list_tools():
             inputSchema={
                 "type": "object",
                 "properties": {}
+            }
+        ),
+        Tool(
+            name="ask_alert_knowledge_base",
+            description="Ask a natural language question about emergency alerts using the RAG system. Use for summaries, specific details, or pattern questions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The natural language question to ask."}
+                },
+                "required": ["query"]
             }
         )
     ]
@@ -183,6 +227,34 @@ async def call_tool(name: str, arguments: dict):
             "timestamp": now_utc_iso()
         }
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+    elif name == "ask_alert_knowledge_base":
+        query = arguments.get("query", "")
+        if not query:
+            return [TextContent(type="text", text="Error: Query is required.")]
+
+        try:
+            retriever, generator = get_rag_components()
+            
+            # 1. Retrieve
+            retrieved_docs = retriever.retrieve(query)
+            
+            # 2. Generate
+            response = generator.generate(query, retrieved_docs)
+            
+            # Format output
+            result = {
+                "success": True,
+                "tool": "ask_alert_knowledge_base",
+                "answer": response["answer"],
+                "sources_count": len(response["sources"]),
+                "sources": response["sources"],
+                "tokens_used": response.get("tokens_used", 0)
+            }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+            
+        except Exception as e:
+            return [TextContent(type="text", text=f"RAG Error: {str(e)}")]
 
     raise ValueError(f"Unknown tool: {name}")
 
