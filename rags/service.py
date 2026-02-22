@@ -69,6 +69,10 @@ CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
 CACHE_MAX_SIZE = 100  # Maximum number of cached queries
 query_cache: Dict[str, Dict[str, Any]] = {}  # query_hash -> {response, timestamp}
 
+# Cleanup service tracking
+last_cleanup_result: Optional[Dict[str, Any]] = None
+CLEANUP_STALE_THRESHOLD = 7200  # 2 hour in seconds
+
 # Metrics tracking
 metrics = {
     "total_queries": 0,
@@ -623,22 +627,35 @@ async def health():
     Checks health of all RAG system components:
     - AlertRetriever: Database connectivity and document count
     - ResponseGenerator: LLM API availability
+    - AlertCleanupService: Last cleanup execution status and metrics
     
     Returns:
         Dict with component statuses and database statistics
     
-    Example Response:
+     Example Response:
         {
             "status": "healthy",
             "retriever_status": "healthy",
             "generator_status": "healthy",
+            "cleanup_status": "healthy",
             "documents_indexed": 1523,
-            "collection_name": "pbs_warn_alerts"
+            "collection_name": "pbs_warn_alerts",
+            "last_cleanup_timestamp": "2025-01-15T14:00:00Z",
+            "last_cleanup_metrics": {
+                "removed_count": 42,
+                "execution_time_ms": 347.2
+            }
         }
     
     Status Values:
         - "healthy": All components operational
-        - "unhealthy": One or more components failed health check
+        - "never_run": Cleanup service hasn't executed yet (startup grace period)
+        - "unhealthy": One or more components failed health check or cleanup is stale
+    
+    Cleanup Health Logic:
+        - "never_run": No cleanup has occurred yet
+        - "unhealthy": Last cleanup was more than 2 hours ago
+        - "healthy": Last cleanup was within 2 hours and successful
     
     HTTP Status:
         - Always returns 200 (use response body to check actual health)
@@ -647,6 +664,7 @@ async def health():
         - Component failures are logged to pbs_warn_scraper.log
         - Monitor this endpoint for production alerting
         - Check documents_indexed to ensure ingestion is working
+        - Cleanup status helps detect scheduler failures
     """
     try:
         # Check retriever database stats
@@ -663,16 +681,87 @@ async def health():
         logging.error(f"Health check error: {e}")
         generator_status = "unhealthy"
 
-    overall_status = "healthy" if retriever_status == "healthy" and generator_status == "healthy" else "unhealthy"
+    # Check cleanup service status
+    cleanup_status = "never_run"
+    last_cleanup_timestamp = None
+    last_cleanup_metrics = None
+    
+    if last_cleanup_result is not None:
+        last_cleanup_timestamp = last_cleanup_result.get('timestamp')
+        last_cleanup_metrics = {
+            'removed_count': last_cleanup_result.get('removed_count', 0),
+            'execution_time_ms': last_cleanup_result.get('execution_time_ms', 0.0)
+        }
+        
+        # Check if cleanup is stale (more than 2 hours ago)
+        try:
+            from datetime import datetime, timezone
+            # Parse last cleanup timestamp
+            cleanup_time_str = last_cleanup_result.get('timestamp', '').replace('Z', '+00:00')
+            cleanup_time = datetime.fromisoformat(cleanup_time_str)
+            current_time = datetime.now(timezone.utc)
+            time_since_cleanup = (current_time - cleanup_time).total_seconds()
+            
+            if time_since_cleanup > CLEANUP_STALE_THRESHOLD:
+                cleanup_status = "unhealthy"
+                logging.warning(f"Cleanup service stale: last run {time_since_cleanup:.0f}s ago (threshold: {CLEANUP_STALE_THRESHOLD}s)")
+            elif last_cleanup_result.get('status') == 'error':
+                cleanup_status = "unhealthy"
+                logging.warning(f"Last cleanup failed: {last_cleanup_result.get('error', 'Unknown error')}")
+            else:
+                cleanup_status = "healthy"
+        except Exception as e:
+            logging.error(f"Error checking cleanup staleness: {e}")
+            cleanup_status = "unhealthy"
+
+    # Determine overall status
+    overall_status = "healthy"
+    if retriever_status != "healthy" or generator_status != "healthy":
+        overall_status = "unhealthy"
+    # Note: cleanup_status of "never_run" doesn't fail overall health (startup grace period)
+    if cleanup_status == "unhealthy":
+        overall_status = "unhealthy"
 
     return {
         "status": overall_status,
         "retriever_status": retriever_status,
         "generator_status": generator_status,
+        "cleanup_status": cleanup_status,
         "documents_indexed": stats['document_count'] if retriever_status == "healthy" else None,
-        "collection_name": retriever.db.collection_name if retriever_status == "healthy" else None
+        "collection_name": retriever.db.collection_name if retriever_status == "healthy" else None,
+        "last_cleanup_timestamp": last_cleanup_timestamp,
+        "last_cleanup_metrics": last_cleanup_metrics
     }
 
+def update_cleanup_metrics(cleanup_result: Dict[str, Any]) -> None:
+    """
+    Update the last cleanup result for health reporting.
+    
+    This function is called by the scheduler after each cleanup execution
+    to update the service's cleanup status tracking.
+    
+    Args:
+        cleanup_result: Dict from AlertCleanupService.run_cleanup() containing:
+            - removed_count: Number of alerts deleted
+            - execution_time_ms: Cleanup execution time
+            - timestamp: ISO timestamp of cleanup
+            - status: "success" or "error"
+            - error: Error message (if status is "error")
+    
+    Notes:
+        - Stored in module-level variable for health endpoint access
+        - Used to determine cleanup_status in /health endpoint
+        - Logs update for audit trail
+    """
+    global last_cleanup_result
+    last_cleanup_result = cleanup_result
+    
+    status = cleanup_result.get('status', 'unknown')
+    removed = cleanup_result.get('removed_count', 0)
+    exec_time = cleanup_result.get('execution_time_ms', 0)
+    
+    logging.info(f"Updated cleanup metrics: status={status}, removed={removed}, time={exec_time:.2f}ms")
+    
 
 @app.get("/")
 async def root():
