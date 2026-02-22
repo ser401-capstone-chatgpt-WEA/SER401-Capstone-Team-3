@@ -4,10 +4,13 @@ PBS Warn Data Normalizer
 Requirements
 - Python 3.8
 
-Installation
+How to Use
 - Donwload 'normalize_pbs_warn.py' and install it into a folder
 - Move the desired files to be converted into the folder
-- Open command line within the folder, and run 'python normalize_pbs_warn_v2.py [target file].json', replacing [target file] with the desired file to edit
+
+- Open cmd line within the folder, and run 'python normalize_pbs_warn_v2.py [target_file].json', replacing target file with the desired file to edit. This edits a single file
+- Output may be manually specified by running 'python normalize_pbs_warn_v2.py raw_file.json -o cleaned_output.json', which sets the output name to cleaned_output
+- Folders can be run similarly via 'python normalize_pbs_warn_v2.py [folder_name]', which will run every item inside the folder
 - Open up the newly created file for use as the final output
 
 Example Input:
