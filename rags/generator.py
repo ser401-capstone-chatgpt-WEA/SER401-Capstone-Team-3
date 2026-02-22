@@ -136,3 +136,42 @@ class ResponseGenerator:
                 f"Content: {doc.get('text', '')}\n"
             )
         return "\n".join(context_parts)
+    
+    def check_health(self) -> str:
+        """
+        Check the health of the response generator.
+        
+        Verifies that the LLM client is properly configured and can
+        communicate with the Gemini API by attempting a minimal request.
+        
+        Returns:
+            str: "healthy" if the generator is operational, "unhealthy" otherwise
+        
+        Notes:
+            - Uses a simple test prompt to verify API connectivity
+            - Logs any errors encountered during health check
+            - Does not count against rate limits (minimal token usage)
+        """
+        try:
+            # Attempt a minimal API call to verify connectivity
+            test_prompt = "Respond with 'ok'"
+            resp = self.client.models.generate_content(
+                model=self.model,
+                contents=test_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    max_output_tokens=5
+                )
+            )
+            
+            # If we get any response, the API is working
+            if resp and hasattr(resp, 'text'):
+                logging.info("Generator health check passed")
+                return "healthy"
+            else:
+                logging.warning("Generator health check: unexpected response format")
+                return "unhealthy"
+                
+        except Exception as e:
+            logging.error(f"Generator health check failed: {e}")
+            return "unhealthy"

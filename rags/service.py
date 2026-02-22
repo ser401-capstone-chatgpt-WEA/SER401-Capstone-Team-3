@@ -19,15 +19,26 @@ Endpoints:
 - GET /: API information and endpoint documentation
 """
 from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
 import re
+import uuid
+import time
 from collections import deque
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
 from rags.query_utils import preprocess_query, store_query_history, get_query_history
+from rags.exceptions import (
+    RAGServiceError,
+    QueryValidationError,
+    RetrieverError,
+    GeneratorError,
+    RateLimitExceededError,
+    rag_exception_to_http
+)
 
 logging.basicConfig(
     filename='pbs_warn_scraper.log',
@@ -48,25 +59,198 @@ generator = ResponseGenerator()
 # In-memory query history (limited to the last 100 queries)
 query_history = deque(maxlen=100)
 
+# Rate limiting configuration
+RATE_LIMIT_REQUESTS = 60  # Max requests per window
+RATE_LIMIT_WINDOW = 60    # Window size in seconds
+rate_limit_store: Dict[str, List[float]] = {}  # IP -> list of request timestamps
+
+# Query cache configuration
+CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
+CACHE_MAX_SIZE = 100  # Maximum number of cached queries
+query_cache: Dict[str, Dict[str, Any]] = {}  # query_hash -> {response, timestamp}
+
+# Metrics tracking
+metrics = {
+    "total_queries": 0,
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "total_errors": 0,
+    "total_response_time_ms": 0.0,
+    "service_start_time": time.time()
+}
+
+
+def get_cache_key(query: str, top_k: int, filters: Optional[Dict]) -> str:
+    """
+    Generate a cache key from query parameters.
+    
+    Args:
+        query: The processed query string
+        top_k: Number of documents to retrieve
+        filters: Optional metadata filters
+    
+    Returns:
+        A unique string key for the query
+    """
+    import hashlib
+    import json
+    filter_str = json.dumps(filters, sort_keys=True) if filters else ""
+    key_str = f"{query}:{top_k}:{filter_str}"
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+
+def get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a cached response if it exists and hasn't expired.
+    
+    Args:
+        cache_key: The cache key to look up
+    
+    Returns:
+        Cached response dict or None if not found/expired
+    """
+    if cache_key in query_cache:
+        cached = query_cache[cache_key]
+        if time.time() - cached['timestamp'] < CACHE_TTL:
+            return cached['response']
+        else:
+            # Remove expired entry
+            del query_cache[cache_key]
+    return None
+
+
+def store_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
+    """
+    Store a response in the cache.
+    
+    Implements LRU-style eviction when cache is full.
+    
+    Args:
+        cache_key: The cache key
+        response: The response to cache
+    """
+    # Evict oldest entries if cache is full
+    if len(query_cache) >= CACHE_MAX_SIZE:
+        oldest_key = min(query_cache.keys(), key=lambda k: query_cache[k]['timestamp'])
+        del query_cache[oldest_key]
+    
+    query_cache[cache_key] = {
+        'response': response,
+        'timestamp': time.time()
+    }
+
+
+@app.exception_handler(RAGServiceError)
+async def rag_service_error_handler(request: Request, exc: RAGServiceError):
+    """
+    Global exception handler for RAG service errors.
+    
+    Converts custom RAGServiceError exceptions to appropriate HTTP responses
+    with consistent error formatting.
+    """
+    request_id = getattr(request.state, 'request_id', 'unknown')
+    logging.error(f"[{request_id}] {exc.__class__.__name__}: {exc.message}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.__class__.__name__,
+            "detail": exc.message,
+            "request_id": request_id
+        }
+    )
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """
-    HTTP request/response logging middleware.
+    HTTP request/response logging middleware with request ID tracking.
     
-    Logs all incoming requests and their response status codes to help with
-    debugging and monitoring API usage.
+    Generates a unique request ID for each incoming request and includes it
+    in logs and response headers for easier debugging and tracing.
     
     Args:
         request: Incoming FastAPI request
         call_next: Next middleware/handler in chain
     
     Returns:
-        Response from downstream handlers
+        Response from downstream handlers with X-Request-ID header
     """
-    logging.info(f"Incoming request: {request.method} {request.url}")
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    logging.info(f"[{request_id}] Incoming request: {request.method} {request.url}")
     response = await call_next(request)
-    logging.info(f"Response status: {response.status_code}")
+    response.headers["X-Request-ID"] = request_id
+    logging.info(f"[{request_id}] Response status: {response.status_code}")
     return response
+
+
+def check_rate_limit(client_ip: str) -> bool:
+    """
+    Check if a client has exceeded the rate limit.
+    
+    Uses a sliding window algorithm to track requests per client IP.
+    
+    Args:
+        client_ip: The client's IP address
+    
+    Returns:
+        True if within rate limit, False if exceeded
+    """
+    current_time = time.time()
+    window_start = current_time - RATE_LIMIT_WINDOW
+    
+    # Initialize or get existing timestamps
+    if client_ip not in rate_limit_store:
+        rate_limit_store[client_ip] = []
+    
+    # Remove timestamps outside the current window
+    rate_limit_store[client_ip] = [
+        ts for ts in rate_limit_store[client_ip] if ts > window_start
+    ]
+    
+    # Check if within limit
+    if len(rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        return False
+    
+    # Add current request timestamp
+    rate_limit_store[client_ip].append(current_time)
+    return True
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Rate limiting middleware for the /query endpoint.
+    
+    Limits requests to RATE_LIMIT_REQUESTS per RATE_LIMIT_WINDOW seconds per client IP.
+    Only applies to POST requests to /query endpoint.
+    
+    Args:
+        request: Incoming FastAPI request
+        call_next: Next middleware/handler in chain
+    
+    Returns:
+        Response or 429 error if rate limit exceeded
+    """
+    # Only rate limit the /query endpoint
+    if request.method == "POST" and request.url.path == "/query":
+        client_ip = request.client.host if request.client else "unknown"
+        
+        if not check_rate_limit(client_ip):
+            request_id = getattr(request.state, 'request_id', 'unknown')
+            logging.warning(f"[{request_id}] Rate limit exceeded for {client_ip}")
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "RateLimitExceededError",
+                    "detail": f"Rate limit exceeded. Maximum {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds.",
+                    "request_id": request_id,
+                    "retry_after": RATE_LIMIT_WINDOW
+                },
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW)}
+            )
+    
+    return await call_next(request)
 
 
 class QueryRequest(BaseModel):
@@ -148,7 +332,7 @@ def validate_query(query: str):
         query: User-provided query string
     
     Raises:
-        HTTPException: 400 error with specific validation failure message
+        QueryValidationError: With specific validation failure message
     
     Security Notes:
         - Blocks common SQL injection patterns (DROP TABLE, --, ;)
@@ -156,25 +340,25 @@ def validate_query(query: str):
         - Case-insensitive pattern matching
     """
     if not query or len(query.strip()) == 0:
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+        raise QueryValidationError("Query cannot be empty.")
     if len(query) > 1000:
-        raise HTTPException(status_code=400, detail="Query exceeds maximum length of 1,000 characters.")
+        raise QueryValidationError("Query exceeds maximum length of 1,000 characters.")
     if len(query) < 3:
-        raise HTTPException(status_code=400, detail="Query must be at least 3 characters long.")
+        raise QueryValidationError("Query must be at least 3 characters long.")
 
     # Check for prohibited characters or patterns
     prohibited_patterns = [r"DROP TABLE", r"--", r";"]
     for pattern in prohibited_patterns:
         if re.search(pattern, query, re.IGNORECASE):
-            raise HTTPException(status_code=400, detail="Query contains prohibited patterns or characters.")
+            raise QueryValidationError("Query contains prohibited patterns or characters.")
 
     # Ensure query contains only allowed characters
     if not re.match(r"^[a-zA-Z0-9 .,?!'\"-]+$", query):
-        raise HTTPException(status_code=400, detail="Query contains unsupported characters.")
+        raise QueryValidationError("Query contains unsupported characters.")
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query_rag(request: QueryRequest):
+async def query_rag(request: QueryRequest, http_request: Request):
     """
     Query the RAG system for emergency alert information.
     
@@ -186,6 +370,7 @@ async def query_rag(request: QueryRequest):
     
     Args:
         request: QueryRequest containing query text, top_k, filters, and formatting options
+        http_request: FastAPI Request object for accessing request ID
     
     Returns:
         QueryResponse with generated answer, source citations, token usage, and optional formatted summary
@@ -211,18 +396,36 @@ async def query_rag(request: QueryRequest):
         }
     
     Notes:
-        - All queries are logged to pbs_warn_scraper.log
+        - All queries are logged to pbs_warn_scraper.log with request ID
         - Query history is stored in-memory (last 100 queries)
         - Filters apply to alert metadata (severity, urgency, event, sender, etc.)
+        - Responses are cached for CACHE_TTL seconds to reduce redundant lookups
     """
+    request_id = getattr(http_request.state, 'request_id', 'unknown')
+    start_time = time.time()
+    metrics["total_queries"] += 1
+    
     try:
         # Preprocess the query
         processed_query = preprocess_query(request.query)
-        logging.info(f"Processed query: {processed_query}")
+        logging.info(f"[{request_id}] Processed query: {processed_query}")
 
         # Validate the query
         validate_query(processed_query)
-        logging.info(f"Query parameters: top_k={request.top_k}, filters={request.filters}")
+        logging.info(f"[{request_id}] Query parameters: top_k={request.top_k}, filters={request.filters}")
+        
+        # Check cache first
+        cache_key = get_cache_key(processed_query, request.top_k, request.filters)
+        cached_response = get_cached_response(cache_key)
+        if cached_response:
+            logging.info(f"[{request_id}] Cache hit for query")
+            metrics["cache_hits"] += 1
+            elapsed_ms = (time.time() - start_time) * 1000
+            metrics["total_response_time_ms"] += elapsed_ms
+            return QueryResponse(**cached_response)
+        
+        metrics["cache_misses"] += 1
+        logging.info(f"[{request_id}] Cache miss, querying RAG system")
         
         # Retrieve relevant documents
         retrieved = retriever.retrieve(
@@ -230,14 +433,14 @@ async def query_rag(request: QueryRequest):
             top_k=request.top_k,
             filters=request.filters
         )
-        logging.info(f"Retrieved {len(retrieved)} documents")
+        logging.info(f"[{request_id}] Retrieved {len(retrieved)} documents")
         
         # Generate grounded response
         response = generator.generate(
             query=processed_query,
             retrieved_docs=retrieved
         )
-        logging.info("Generated response successfully")
+        logging.info(f"[{request_id}] Generated response successfully")
 
         formatted_summary = format_response_summary(response, retrieved)
         response["formatted_summary"] = formatted_summary
@@ -245,6 +448,10 @@ async def query_rag(request: QueryRequest):
         # Format the query if needed
         if request.formatted:
             response["answer"] = formatted_summary
+        
+        # Store in cache
+        store_cached_response(cache_key, response)
+        logging.info(f"[{request_id}] Response cached")
 
         # Store query and result in history
         store_query_history(
@@ -256,10 +463,15 @@ async def query_rag(request: QueryRequest):
             response=response
         )
         
+        # Track response time
+        elapsed_ms = (time.time() - start_time) * 1000
+        metrics["total_response_time_ms"] += elapsed_ms
+        
         return QueryResponse(**response)
         
     except Exception as e:
-        logging.error(f"Query error: {e}")
+        metrics["total_errors"] += 1
+        logging.error(f"[{request_id}] Query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -344,6 +556,63 @@ async def get_query_history_endpoint():
         - Consider adding authentication for production deployments
     """
     return get_query_history()
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """
+    Retrieve service usage metrics.
+    
+    Returns statistics about service usage including query counts,
+    cache performance, error rates, and response times.
+    
+    Returns:
+        Dict containing usage metrics and calculated statistics
+    
+    Example Response:
+        {
+            "total_queries": 1523,
+            "cache_hits": 892,
+            "cache_misses": 631,
+            "cache_hit_rate": 0.585,
+            "total_errors": 12,
+            "error_rate": 0.008,
+            "average_response_time_ms": 245.3,
+            "uptime_seconds": 86400,
+            "current_cache_size": 87,
+            "rate_limit_config": {
+                "requests_per_window": 60,
+                "window_seconds": 60
+            }
+        }
+    
+    Notes:
+        - Metrics are reset on service restart
+        - Cache hit rate = cache_hits / total_queries
+        - Error rate = total_errors / total_queries
+        - Average response time includes both cache hits and misses
+    """
+    total_queries = metrics["total_queries"]
+    cache_hit_rate = metrics["cache_hits"] / total_queries if total_queries > 0 else 0
+    error_rate = metrics["total_errors"] / total_queries if total_queries > 0 else 0
+    avg_response_time = metrics["total_response_time_ms"] / total_queries if total_queries > 0 else 0
+    uptime = time.time() - metrics["service_start_time"]
+    
+    return {
+        "total_queries": total_queries,
+        "cache_hits": metrics["cache_hits"],
+        "cache_misses": metrics["cache_misses"],
+        "cache_hit_rate": round(cache_hit_rate, 3),
+        "total_errors": metrics["total_errors"],
+        "error_rate": round(error_rate, 3),
+        "average_response_time_ms": round(avg_response_time, 1),
+        "uptime_seconds": round(uptime, 0),
+        "current_cache_size": len(query_cache),
+        "rate_limit_config": {
+            "requests_per_window": RATE_LIMIT_REQUESTS,
+            "window_seconds": RATE_LIMIT_WINDOW
+        }
+    }
 
 
 @app.get("/health")
@@ -449,6 +718,11 @@ async def root():
                 "path": "/history",
                 "method": "GET",
                 "description": "Retrieve recent query history"
+            },
+            "metrics": {
+                "path": "/metrics",
+                "method": "GET",
+                "description": "Retrieve service usage metrics and statistics"
             },
             "docs": {
                 "path": "/docs",
