@@ -137,11 +137,14 @@ async def list_tools():
         ),
         Tool(
             name="get_alert_summary_for_region",
-            description="Search alerts by region/city/state/county name. Searches alert sender, event name, and area descriptions for the given text.",
+            description="Search alerts by region/city/state/county name. Searches alert sender, event name, and area descriptions for the given text. Returns up to 5 alerts.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "region": {"type": "string", "description": "Region, city, state, or county name to search for in alert data"}
+                    "region": {
+                        "type": "string", 
+                        "description": "Region, city, state, or county name to search for in alert data. Example: 'California' or 'Los Angeles'."
+                    }
                 },
                 "required": ["region"]
             }
@@ -160,7 +163,10 @@ async def list_tools():
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "The natural language question to ask about emergency alerts."}
+                    "query": {
+                        "type": "string", 
+                        "description": "The natural language question to ask about emergency alerts. Must be clearly phrased."
+                    }
                 },
                 "required": ["query"]
             }
