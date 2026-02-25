@@ -64,6 +64,12 @@ class ResponseGenerator:
                 "tokens_used": 0
             }
         
+        # Enforce dynamic payload limits for ChatGPT context window
+        max_docs_for_chatgpt = 3
+        if len(retrieved_docs) > max_docs_for_chatgpt:
+            logging.info(f"Truncating {len(retrieved_docs)} docs to {max_docs_for_chatgpt} for OpenAI MCP context limits")
+            retrieved_docs = retrieved_docs[:max_docs_for_chatgpt]
+
         # Build context from retrieved docs
         context = self._build_context(retrieved_docs)
 
