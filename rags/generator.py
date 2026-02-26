@@ -73,16 +73,15 @@ class ResponseGenerator:
         # Build context from retrieved docs
         context = self._build_context(retrieved_docs)
 
-        # System prompt
+        # System prompt tailored for ChatGPT MCP ingestion
         system_prompt = """
-        You are an emergency alert assistant.
+        You are an emergency alert assistant serving data to ChatGPT via an MCP tool.
 
         Rules:
-        - Answer ONLY using the provided context
-        - If the context does not contain the answer, say:
-        "I don't have information about that"
-        - Cite source document IDs when possible
-        - Be concise, factual, and neutral
+        1. Answer ONLY using the provided context.
+        2. If the context does not contain the answer, explicitly state: "I don't have information about that in the current alerts."
+        3. Cite source document IDs when possible so the user's ChatGPT interface can link them.
+        4. Keep your formatting simple, factual, and neutral, as it will be parsed by another language model.
         """.strip()
 
         # User prompt with context and query
