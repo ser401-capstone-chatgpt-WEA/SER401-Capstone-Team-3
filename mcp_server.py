@@ -176,182 +176,194 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
     """Handle tool calls from the MCP client."""
-    alerts = load_alerts()
+    try:
+        alerts = load_alerts()
 
-    if name == "get_alerts_near_location":
-        lat = float(arguments["latitude"])
-        lon = float(arguments["longitude"])
-        radius = float(arguments.get("radius_km", 200))
-        nearby = []
-        nearest, min_dist = None, float("inf")
+        if name == "get_alerts_near_location":
+            lat = float(arguments["latitude"])
+            lon = float(arguments["longitude"])
+            radius = float(arguments.get("radius_km", 200))
+            nearby = []
+            nearest, min_dist = None, float("inf")
 
-        for a in alerts:
-            try:
-                dist = haversine(lat, lon, a["latitude"], a["longitude"])
-                if dist < min_dist:
-                    nearest, min_dist = a.copy(), dist
-                if dist <= radius:
-                    a_copy = dict(a)
-                    a_copy["distance_km"] = round(dist, 2)
-                    nearby.append(a_copy)
-            except Exception:
-                continue
+            for a in alerts:
+                try:
+                    dist = haversine(lat, lon, a["latitude"], a["longitude"])
+                    if dist < min_dist:
+                        nearest, min_dist = a.copy(), dist
+                    if dist <= radius:
+                        a_copy = dict(a)
+                        a_copy["distance_km"] = round(dist, 2)
+                        nearby.append(a_copy)
+                except Exception:
+                    continue
 
-        result = {
-            "success": True,
-            "tool": "get_alerts_near_location",
-            "count": len(nearby),
-            "timestamp": now_utc_iso(),
-            "alerts": nearby
-        }
-        # Always include nearest alert info even if outside radius
-        if nearest and not nearby:
-            result["nearest_alert"] = {
-                "event": nearest.get("event", "Unknown"),
-                "sender": nearest.get("sender", "Unknown"),
-                "distance_km": round(min_dist, 2),
-                "note": f"No alerts within {radius}km, but nearest alert is {round(min_dist, 1)}km away."
-            }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    elif name == "check_emergency_status":
-        lat = float(arguments["latitude"])
-        lon = float(arguments["longitude"])
-
-        nearest, min_dist = None, float("inf")
-        for a in alerts:
-            try:
-                dist = haversine(lat, lon, a["latitude"], a["longitude"])
-                if dist < min_dist:
-                    nearest, min_dist = a, dist
-            except Exception:
-                continue
-
-        if nearest and min_dist < 10:
-            status = f"Active alert within {min_dist:.1f} km: {nearest.get('title') or nearest.get('event', 'Unknown')}."
-        elif nearest:
-            status = f"No active emergency nearby. Closest alert {min_dist:.1f} km away."
-        else:
-            status = "No alert data available."
-
-        result = {
-            "success": True,
-            "tool": "check_emergency_status",
-            "status": status,
-            "nearest_alert": nearest,
-            "distance_km": round(min_dist, 2) if min_dist != float("inf") else None,
-            "timestamp": now_utc_iso()
-        }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    elif name == "get_alert_summary_for_region":
-        region = arguments.get("region", "").lower()
-        
-        # State abbreviation mapping for flexible matching
-        state_map = {
-            "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar",
-            "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
-            "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id",
-            "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks",
-            "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
-            "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
-            "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
-            "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny",
-            "north carolina": "nc", "north dakota": "nd", "ohio": "oh", "oklahoma": "ok",
-            "oregon": "or", "pennsylvania": "pa", "rhode island": "ri", "south carolina": "sc",
-            "south dakota": "sd", "tennessee": "tn", "texas": "tx", "utah": "ut",
-            "vermont": "vt", "virginia": "va", "washington": "wa", "west virginia": "wv",
-            "wisconsin": "wi", "wyoming": "wy"
-        }
-        abbrev_map = {v: k for k, v in state_map.items()}
-        
-        # Build search terms: split on commas and spaces, filter empties
-        import re as _re
-        search_terms = [t.strip() for t in _re.split(r'[,]+', region) if t.strip()]
-        # Expand state names/abbreviations
-        expanded = set(search_terms)
-        for term in search_terms:
-            if term in state_map:
-                expanded.add(state_map[term])
-            if term in abbrev_map:
-                expanded.add(abbrev_map[term])
-        
-        region_alerts = []
-        for a in alerts:
-            searchable = " ".join([
-                str(a.get("sender", "")),
-                str(a.get("event", "")),
-                str(a.get("title", "")),
-                str(a.get("category", "")),
-                " ".join(
-                    str(area.get("value", ""))
-                    for area in a.get("areas", [])
-                    if area.get("type") == "area_description"
-                ),
-                " ".join(
-                    str(t.get("text", ""))
-                    for t in a.get("texts", [])
-                )
-            ]).lower()
-            # Match if ANY search term is found
-            if any(term in searchable for term in expanded):
-                region_alerts.append(a)
-        summary = f"{len(region_alerts)} active alerts matching '{region.title()}'."
-
-        result = {
-            "success": True,
-            "tool": "get_alert_summary_for_region",
-            "region": region,
-            "count": len(region_alerts),
-            "summary": summary,
-            "alerts": region_alerts[:5],
-            "timestamp": now_utc_iso()
-        }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    elif name == "get_alert_sources_status":
-        sources = [
-            {"name": "PBS WARN", "last_fetched": "2 m ago", "status": "OK"},
-            {"name": "IPAWS", "last_fetched": "8 m ago", "status": "OK"}
-        ]
-
-        result = {
-            "success": True,
-            "tool": "get_alert_sources_status",
-            "sources": sources,
-            "timestamp": now_utc_iso()
-        }
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    elif name == "ask_alert_knowledge_base":
-        query = arguments.get("query", "")
-        if not query:
-            return [TextContent(type="text", text="Error: Query is required.")]
-
-        try:
-            retriever, generator = get_rag_components()
-            
-            # 1. Retrieve
-            retrieved_docs = retriever.retrieve(query)
-            
-            # 2. Generate
-            response = generator.generate(query, retrieved_docs)
-            
-            # Format output
             result = {
                 "success": True,
-                "tool": "ask_alert_knowledge_base",
-                "answer": response["answer"],
-                "sources_count": len(response["sources"]),
-                "sources": response["sources"],
-                "tokens_used": response.get("tokens_used", 0)
+                "tool": "get_alerts_near_location",
+                "count": len(nearby),
+                "timestamp": now_utc_iso(),
+                "alerts": nearby
+            }
+            # Always include nearest alert info even if outside radius
+            if nearest and not nearby:
+                result["nearest_alert"] = {
+                    "event": nearest.get("event", "Unknown"),
+                    "sender": nearest.get("sender", "Unknown"),
+                    "distance_km": round(min_dist, 2),
+                    "note": f"No alerts within {radius}km, but nearest alert is {round(min_dist, 1)}km away."
+                }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "check_emergency_status":
+            lat = float(arguments["latitude"])
+            lon = float(arguments["longitude"])
+
+            nearest, min_dist = None, float("inf")
+            for a in alerts:
+                try:
+                    dist = haversine(lat, lon, a["latitude"], a["longitude"])
+                    if dist < min_dist:
+                        nearest, min_dist = a, dist
+                except Exception:
+                    continue
+
+            if nearest and min_dist < 10:
+                status = f"Active alert within {min_dist:.1f} km: {nearest.get('title') or nearest.get('event', 'Unknown')}."
+            elif nearest:
+                status = f"No active emergency nearby. Closest alert {min_dist:.1f} km away."
+            else:
+                status = "No alert data available."
+
+            result = {
+                "success": True,
+                "tool": "check_emergency_status",
+                "status": status,
+                "nearest_alert": nearest,
+                "distance_km": round(min_dist, 2) if min_dist != float("inf") else None,
+                "timestamp": now_utc_iso()
             }
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
-        except Exception as e:
-            return [TextContent(type="text", text=f"RAG Error: {str(e)}")]
 
-    raise ValueError(f"Unknown tool: {name}")
+        elif name == "get_alert_summary_for_region":
+            region = arguments.get("region", "").lower()
+            
+            # State abbreviation mapping for flexible matching
+            state_map = {
+                "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar",
+                "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
+                "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id",
+                "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks",
+                "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
+                "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
+                "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
+                "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny",
+                "north carolina": "nc", "north dakota": "nd", "ohio": "oh", "oklahoma": "ok",
+                "oregon": "or", "pennsylvania": "pa", "rhode island": "ri", "south carolina": "sc",
+                "south dakota": "sd", "tennessee": "tn", "texas": "tx", "utah": "ut",
+                "vermont": "vt", "virginia": "va", "washington": "wa", "west virginia": "wv",
+                "wisconsin": "wi", "wyoming": "wy"
+            }
+            abbrev_map = {v: k for k, v in state_map.items()}
+            
+            # Build search terms: split on commas and spaces, filter empties
+            import re as _re
+            search_terms = [t.strip() for t in _re.split(r'[,]+', region) if t.strip()]
+            # Expand state names/abbreviations
+            expanded = set(search_terms)
+            for term in search_terms:
+                if term in state_map:
+                    expanded.add(state_map[term])
+                if term in abbrev_map:
+                    expanded.add(abbrev_map[term])
+            
+            region_alerts = []
+            for a in alerts:
+                searchable = " ".join([
+                    str(a.get("sender", "")),
+                    str(a.get("event", "")),
+                    str(a.get("title", "")),
+                    str(a.get("category", "")),
+                    " ".join(
+                        str(area.get("value", ""))
+                        for area in a.get("areas", [])
+                        if area.get("type") == "area_description"
+                    ),
+                    " ".join(
+                        str(t.get("text", ""))
+                        for t in a.get("texts", [])
+                    )
+                ]).lower()
+                # Match if ANY search term is found
+                if any(term in searchable for term in expanded):
+                    region_alerts.append(a)
+            summary = f"{len(region_alerts)} active alerts matching '{region.title()}'."
+
+            result = {
+                "success": True,
+                "tool": "get_alert_summary_for_region",
+                "region": region,
+                "count": len(region_alerts),
+                "summary": summary,
+                "alerts": region_alerts[:5],
+                "timestamp": now_utc_iso()
+            }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "get_alert_sources_status":
+            sources = [
+                {"name": "PBS WARN", "last_fetched": "2 m ago", "status": "OK"},
+                {"name": "IPAWS", "last_fetched": "8 m ago", "status": "OK"}
+            ]
+
+            result = {
+                "success": True,
+                "tool": "get_alert_sources_status",
+                "sources": sources,
+                "timestamp": now_utc_iso()
+            }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+        elif name == "ask_alert_knowledge_base":
+            query = arguments.get("query", "")
+            if not query:
+                return [TextContent(type="text", text="Error: Query is required.")]
+
+            try:
+                retriever, generator = get_rag_components()
+                
+                # 1. Retrieve
+                retrieved_docs = retriever.retrieve(query)
+                
+                # 2. Generate
+                response = generator.generate(query, retrieved_docs)
+                
+                # Format output
+                result = {
+                    "success": True,
+                    "tool": "ask_alert_knowledge_base",
+                    "answer": response["answer"],
+                    "sources_count": len(response["sources"]),
+                    "sources": response["sources"],
+                    "tokens_used": response.get("tokens_used", 0)
+                }
+                return [TextContent(type="text", text=json.dumps(result, indent=2))]
+                
+            except Exception as e:
+                return [TextContent(type="text", text=json.dumps({"success": False, "error": f"RAG Error: {str(e)}"}))]
+
+        raise ValueError(f"Unknown tool: {name}")
+
+    except Exception as e:
+        # Standardize the error response pattern for OpenAI compatibility
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "tool": name,
+            "timestamp": now_utc_iso(),
+            "note": "Ensure your request parameters strictly match the tool schema."
+        }
+        return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
 
 # -------------------------------------------------------------
 # Main Entry Point
