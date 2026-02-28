@@ -84,10 +84,39 @@ def run_rag_ingestion():
     Execute RAG data ingestion from scraped alerts.
     
     Runs rags.ingest_alerts module to index new alerts into Chroma.
-    Scheduled to run X minutes after scraper to ensure data availability.
+    Scheduled to run 5 minutes after scraper to ensure data availability.
     """
-    # TODO maybe 5 minutes
-    pass
+    logging.info("="*80)
+    logging.info(f"[SCHEDULER] Starting RAG ingestion job at {get_timestamp()}")
+    logging.info("="*80)
+    
+    try:
+        result = subprocess.run(
+            ['python3', '-m', 'rags.ingest_alerts'],
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout
+            cwd=Path(__file__).parent
+        )
+        
+        if result.returncode == 0:
+            logging.info("[SCHEDULER] RAG ingestion completed successfully")
+            if result.stdout:
+                # Log key statistics from ingestion
+                for line in result.stdout.split('\n'):
+                    if 'Ingested' in line or 'documents' in line or 'files processed' in line:
+                        logging.info(f"[SCHEDULER] {line.strip()}")
+        else:
+            logging.error(f"[SCHEDULER] RAG ingestion failed with return code {result.returncode}")
+            if result.stderr:
+                logging.error(f"[SCHEDULER] Ingestion error: {result.stderr}")
+                
+    except subprocess.TimeoutExpired:
+        logging.error("[SCHEDULER] RAG ingestion timed out after 10 minutes")
+    except Exception as e:
+        logging.error(f"[SCHEDULER] Unexpected ingestion error: {e}", exc_info=True)
+    finally:
+        logging.info("="*80)
 
 
 def run_cleanup():
