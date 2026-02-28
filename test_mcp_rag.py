@@ -30,6 +30,18 @@ async def test_rag_tool():
         else:
             print("\nTEST FAILED: No output from tool.")
             
+        print("\nTesting OpenAI MCP Error Schema Compatibility...")
+        bad_args = {} # Missing required 'latitude' & 'longitude'
+        result_err = await call_tool("check_emergency_status", bad_args)
+        if result_err and len(result_err) > 0:
+            err_content = result_err[0].text
+            print("\nError Tool Output:")
+            print(err_content)
+            if "success\": false" in err_content.lower() and "error" in err_content.lower():
+                print("\nTEST PASSED: Gracefully handled bad inputs with ChatGPT compatibility schema.")
+            else:
+                print("\nTEST FAILED: Did not return standard error schema.")
+
     except Exception as e:
         print(f"\nTEST FAILED: Exception occurred: {e}")
 
