@@ -1,6 +1,7 @@
 """
 FastAPI RAG service for PBS WARN alerts.
 """
+import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -46,6 +47,7 @@ class QueryResponse(BaseModel):
     answer: str
     sources: List[Source]
     tokens_used: int = 0
+    latency_ms: Dict[str, float] = Field(default_factory=dict, description="Per-stage latency in milliseconds")
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -57,25 +59,43 @@ async def query_rag(request: QueryRequest):
         request: Query request with natural language question
     
     Returns:
-        Grounded answer with source citations
+        Grounded answer with source citations and per-stage latency
     """
     try:
+        total_start = time.perf_counter()
         logging.info(f"Received query: {request.query}")
         
         # Retrieve relevant documents
+        retrieval_start = time.perf_counter()
         retrieved = retriever.retrieve(
             query=request.query,
             top_k=request.top_k,
             filters=request.filters
         )
+        retrieval_ms = (time.perf_counter() - retrieval_start) * 1000
         
         # Generate grounded response
+        generation_start = time.perf_counter()
         response = generator.generate(
             query=request.query,
             retrieved_docs=retrieved
         )
+        generation_ms = (time.perf_counter() - generation_start) * 1000
         
-        return QueryResponse(**response)
+        total_ms = (time.perf_counter() - total_start) * 1000
+
+        latency_ms = {
+            "retrieval_ms": round(retrieval_ms, 2),
+            "generation_ms": round(generation_ms, 2),
+            "total_ms": round(total_ms, 2),
+        }
+
+        logging.info(
+            f"Query latency — retrieval: {retrieval_ms:.1f}ms, "
+            f"generation: {generation_ms:.1f}ms, total: {total_ms:.1f}ms"
+        )
+
+        return QueryResponse(**response, latency_ms=latency_ms)
         
     except Exception as e:
         logging.error(f"Query error: {e}")
