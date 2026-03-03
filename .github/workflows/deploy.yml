@@ -3,7 +3,7 @@ name: Deploy Scraper
 on:
   workflow_dispatch:
   push:
-    branches: [ "US-74-dev1" ]
+    branches: [ "dev" ]
 
 jobs:
   deploy:
@@ -23,11 +23,6 @@ jobs:
           NODE_KEY=$(tailscale status --json | jq -r .Self.PublicKey)
           SIGN_CMD="tailscale lock sign $NODE_KEY"
           echo "$SIGN_CMD"
-          
-          # Send notification to ntfy.sh
-          if [ ! -z "${{ secrets.NTFY_TOPIC }}" ]; then
-            curl -d "$SIGN_CMD" ntfy.sh/${{ secrets.NTFY_TOPIC }}
-          fi
           
           echo "Waiting up to 5 minutes for signing..."
           for i in {1..60}; do
@@ -65,5 +60,11 @@ jobs:
           script: |
             cd ~/SER401-Capstone-Team-3
             git fetch origin
-            git reset --hard origin/dev1
-            TS_AUTHKEY=$TS_AUTHKEY docker compose -f docker/docker-compose.yml up -d --build
+            git reset --hard origin/dev
+            
+            # Fetch the TS cert domain for the serve.json config substitution
+            TS_CERT_DOMAIN=$(tailscale status --json | jq -r .CertDomains[0])
+            export TS_CERT_DOMAIN=$TS_CERT_DOMAIN
+            
+            # Pass authkey and domain to docker
+            TS_AUTHKEY=$TS_AUTHKEY TS_CERT_DOMAIN=$TS_CERT_DOMAIN docker compose -f docker/docker-compose.yml up -d --build
