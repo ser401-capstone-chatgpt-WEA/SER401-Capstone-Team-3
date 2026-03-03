@@ -126,8 +126,37 @@ def run_cleanup():
     Runs rags.cleanup module to remove expired alerts from Chroma.
     Scheduled every 2 hours to maintain database hygiene.
     """
-   # TODO every 2 hours?
-    pass
+    logging.info("="*80)
+    logging.info(f"[SCHEDULER] Starting cleanup job at {get_timestamp()}")
+    logging.info("="*80)
+    
+    try:
+        result = subprocess.run(
+            ['python3', '-m', 'rags.cleanup'],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+            cwd=Path(__file__).parent
+        )
+        
+        if result.returncode == 0:
+            logging.info("[SCHEDULER] Cleanup completed successfully")
+            if result.stdout:
+                # Log cleanup statistics
+                for line in result.stdout.split('\n'):
+                    if 'removed' in line.lower() or 'expired' in line.lower() or 'Documents Remaining' in line:
+                        logging.info(f"[SCHEDULER] {line.strip()}")
+        else:
+            logging.error(f"[SCHEDULER] Cleanup failed with return code {result.returncode}")
+            if result.stderr:
+                logging.error(f"[SCHEDULER] Cleanup error: {result.stderr}")
+                
+    except subprocess.TimeoutExpired:
+        logging.error("[SCHEDULER] Cleanup timed out after 5 minutes")
+    except Exception as e:
+        logging.error(f"[SCHEDULER] Unexpected cleanup error: {e}", exc_info=True)
+    finally:
+        logging.info("="*80)
 
 
 def main():
