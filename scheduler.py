@@ -19,7 +19,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-# TODO import relevant from apscheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 # Configure logging to match project conventions
 logging.basicConfig(
@@ -170,8 +171,77 @@ def main():
     
     All jobs run on startup, then continue on schedule.
     """
-    # TODO implement main scheduler logic
-    pass
+    logging.info("="*80)
+    logging.info("PBS WARN SCHEDULER STARTING")
+    logging.info("="*80)
+    logging.info(f"Start time: {get_timestamp()}")
+    logging.info(f"Working directory: {Path.cwd()}")
+    logging.info("")
+    logging.info("Scheduled Jobs:")
+    logging.info("  - Scraper:   Every 30 minutes")
+    logging.info("  - Ingestion: Every 35 minutes (offset)")
+    logging.info("  - Cleanup:   Every 2 hours")
+    logging.info("="*80)
+    
+    # Initialize scheduler
+    scheduler = BlockingScheduler(timezone='UTC')
+    
+    # Add scraper job (every 30 minutes)
+    scheduler.add_job(
+        run_scraper,
+        trigger=IntervalTrigger(minutes=30),
+        id='scraper',
+        name='PBS WARN API Scraper',
+        replace_existing=True,
+        max_instances=1,  # Prevent overlapping executions
+        coalesce=True     # Skip missed runs if system was down
+    )
+
+     # Add ingestion job (every 35 minutes, offset to allow scraper completion)
+    scheduler.add_job(
+        run_rag_ingestion,
+        trigger=IntervalTrigger(minutes=35),
+        id='ingestion',
+        name='RAG Data Ingestion',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+    
+    # Add cleanup job (every 2 hours)
+    scheduler.add_job(
+        run_cleanup,
+        trigger=IntervalTrigger(hours=2),
+        id='cleanup',
+        name='RAG Database Cleanup',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+    
+    # Run initial jobs immediately on startup
+    logging.info("\n[SCHEDULER] Executing initial jobs...")
+    try:
+        run_scraper()
+        # Small delay to ensure scraper completes before ingestion
+        import time
+        time.sleep(5)
+        run_rag_ingestion()
+    except Exception as e:
+        logging.error(f"[SCHEDULER] Error during initial job execution: {e}", exc_info=True)
+    
+    logging.info("\n[SCHEDULER] Entering scheduled execution mode...")
+    logging.info("[SCHEDULER] Press Ctrl+C to stop")
+
+    # Start scheduler (blocking)
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("\n[SCHEDULER] Shutting down gracefully...")
+        scheduler.shutdown(wait=True)
+        logging.info("[SCHEDULER] Scheduler stopped")
+        sys.exit(0)
+    
 
 
 if __name__ == "__main__":
