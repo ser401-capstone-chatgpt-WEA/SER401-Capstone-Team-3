@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim # This file is now deperacated but it will be kept until PR later
 
 WORKDIR /app
 

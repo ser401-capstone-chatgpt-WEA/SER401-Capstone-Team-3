@@ -12,30 +12,41 @@ services:
     cap_add:
       - NET_ADMIN
     restart: unless-stopped
-  scraper:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    network_mode: service:tailscale
-    volumes:
-      - ../pbs_warn_outputs:/app/pbs_warn_outputs
-    depends_on:
-      - tailscale
+  # scraper: # This is deprecated for now, in favor of the automation service below.
+  #   build:
+  #     context: ..
+  #     dockerfile: Dockerfile
+  #   network_mode: service:tailscale
+  #   volumes:
+  #     - ../pbs_warn_outputs:/app/pbs_warn_outputs
+  #   depends_on:
+  #     - tailscale
 
-  rag:
+  automation:
     build:
       context: ..
-      dockerfile: ./docker/rag-service.Dockerfile
-    network_mode: bridge # May need to change to tailscale, BUT we need to download embedding model.
+      dockerfile: ./docker/automation-service.Dockerfile
+    container_name: pbs-warn-automation
+    network_mode: bridge
     ports:
       - "8000:8000" # For local testing
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PYTHONUNBUFFERED=1  # Ensure logs aren't buffered
     volumes:
+      # All persistent data uses bind mounts from host
+      - ../pbs_warn_outputs:/app/pbs_warn_outputs
       - ../chroma_db:/app/chroma_db
+      - ../pbs_warn_scraper.log:/app/pbs_warn_scraper.log
     depends_on:
       - tailscale
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
 volumes:
   ts_state:
