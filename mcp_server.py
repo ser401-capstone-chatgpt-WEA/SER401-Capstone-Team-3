@@ -8,6 +8,8 @@ import json
 import os
 import math
 import datetime
+import time
+import logging
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -330,6 +332,7 @@ async def call_tool(name: str, arguments: dict):
                 return [TextContent(type="text", text="Error: Query is required.")]
 
             try:
+                start_time = time.time()
                 retriever, generator = get_rag_components()
                 
                 # 1. Retrieve
@@ -337,6 +340,11 @@ async def call_tool(name: str, arguments: dict):
                 
                 # 2. Generate
                 response = generator.generate(query, retrieved_docs)
+                end_time = time.time()
+                duration = end_time - start_time
+                logging.info(f"Query '{query}' response time: {duration:.2f} seconds")
+                if duration > 5:
+                    logging.warning(f"Query '{query}' exceeded 5 second threshold: {duration:.2f} seconds")
                 
                 # Format output
                 result = {
@@ -345,7 +353,8 @@ async def call_tool(name: str, arguments: dict):
                     "answer": response["answer"],
                     "sources_count": len(response["sources"]),
                     "sources": response["sources"],
-                    "tokens_used": response.get("tokens_used", 0)
+                    "tokens_used": response.get("tokens_used", 0),
+                    "response_time_seconds": duration
                 }
                 return [TextContent(type="text", text=json.dumps(result, indent=2))]
                 
