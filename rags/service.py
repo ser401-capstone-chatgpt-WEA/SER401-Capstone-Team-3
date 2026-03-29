@@ -18,8 +18,11 @@ Endpoints:
 - GET /history: Retrieve past query history
 - GET /: API information and endpoint documentation
 """
+
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
+import time
+
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
@@ -324,6 +327,7 @@ class QueryResponse(BaseModel):
     sources: List[Source]
     tokens_used: int = 0
     formatted_summary: Optional[str] = None
+    latency_ms: Dict[str, float] = Field(default_factory=dict, description="Per-stage latency in milliseconds")
 
 
 def validate_query(query: str):
@@ -381,7 +385,7 @@ async def query_rag(request: QueryRequest, http_request: Request):
         http_request: FastAPI Request object for accessing request ID
     
     Returns:
-        QueryResponse with generated answer, source citations, token usage, and optional formatted summary
+        QueryResponse with generated answer, source citations, token usage, optional formatted summary, and per-stage latency
     
     Raises:
         HTTPException: 
@@ -400,7 +404,12 @@ async def query_rag(request: QueryRequest, http_request: Request):
         {
             "answer": "Yes, there is 1 active tornado warning...",
             "sources": [...],
-            "tokens_used": 234
+            "tokens_used": 234,
+            "latency_ms": {
+                "retrieval_ms": 12.3,
+                "generation_ms": 450.2,
+                "total_ms": 463.1
+            }
         }
     
     Notes:
@@ -414,6 +423,9 @@ async def query_rag(request: QueryRequest, http_request: Request):
     metrics["total_queries"] += 1
     
     try:
+        total_start = time.perf_counter()
+        logging.info(f"[{request_id}] Received query: {request.query}")
+
         # Preprocess the query
         processed_query = preprocess_query(request.query)
         logging.info(f"[{request_id}] Processed query: {processed_query}")
@@ -436,19 +448,23 @@ async def query_rag(request: QueryRequest, http_request: Request):
         logging.info(f"[{request_id}] Cache miss, querying RAG system")
         
         # Retrieve relevant documents
+        retrieval_start = time.perf_counter()
         retrieved = retriever.retrieve(
             query=processed_query,
             top_k=request.top_k,
             filters=request.filters
         )
-        logging.info(f"[{request_id}] Retrieved {len(retrieved)} documents")
+        retrieval_ms = (time.perf_counter() - retrieval_start) * 1000
+        logging.info(f"[{request_id}] Retrieved {len(retrieved)} documents in {retrieval_ms:.1f}ms")
         
         # Generate grounded response
+        generation_start = time.perf_counter()
         response = generator.generate(
             query=processed_query,
             retrieved_docs=retrieved
         )
-        logging.info(f"[{request_id}] Generated response successfully")
+        generation_ms = (time.perf_counter() - generation_start) * 1000
+        logging.info(f"[{request_id}] Generated response successfully in {generation_ms:.1f}ms")
 
         formatted_summary = format_response_summary(response, retrieved)
         response["formatted_summary"] = formatted_summary
@@ -456,6 +472,21 @@ async def query_rag(request: QueryRequest, http_request: Request):
         # Format the query if needed
         if request.formatted:
             response["answer"] = formatted_summary
+        
+        total_ms = (time.perf_counter() - total_start) * 1000
+
+        latency_ms = {
+            "retrieval_ms": round(retrieval_ms, 2),
+            "generation_ms": round(generation_ms, 2),
+            "total_ms": round(total_ms, 2),
+        }
+
+        response["latency_ms"] = latency_ms
+
+        logging.info(
+            f"Query latency — retrieval: {retrieval_ms:.1f}ms, "
+            f"generation: {generation_ms:.1f}ms, total: {total_ms:.1f}ms"
+        )
         
         # Store in cache
         store_cached_response(cache_key, response)
@@ -474,7 +505,7 @@ async def query_rag(request: QueryRequest, http_request: Request):
         # Track response time
         elapsed_ms = (time.time() - start_time) * 1000
         metrics["total_response_time_ms"] += elapsed_ms
-        
+
         return QueryResponse(**response)
         
     except Exception as e:

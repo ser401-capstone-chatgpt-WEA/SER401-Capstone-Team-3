@@ -62,7 +62,7 @@ def ingest_file(
     batch_size: int = 100
 ) -> int:
     """
-    Ingest alerts from a single file into Chroma.
+    Ingest alerts from a single file into Chroma, skipping duplicates.
     
     Args:
         file_path: Path to JSON file
@@ -70,7 +70,7 @@ def ingest_file(
         batch_size: Number of documents to ingest per batch
     
     Returns:
-        Number of documents ingested
+        Number of new documents ingested (excludes duplicates)
     """
     # Load alerts
     alerts = load_alerts_from_file(file_path)
@@ -92,6 +92,33 @@ def ingest_file(
         documents.append(text)
         metadatas.append(metadata)
         ids.append(doc_id)
+
+    # Deduplicate: check which IDs already exist in the collection
+    existing_ids = set()
+    try:
+        result = db_manager.collection.get(ids=ids)
+        if result and result['ids']:
+            existing_ids = set(result['ids'])
+    except Exception:
+        # If get() fails (e.g., empty collection), assume no duplicates
+        pass
+
+    if existing_ids:
+        new_docs = []
+        new_metas = []
+        new_ids = []
+        for doc, meta, doc_id in zip(documents, metadatas, ids):
+            if doc_id not in existing_ids:
+                new_docs.append(doc)
+                new_metas.append(meta)
+                new_ids.append(doc_id)
+        skipped = len(documents) - len(new_docs)
+        if skipped:
+            logging.info(f"Skipped {skipped} duplicate documents from {file_path.name}")
+        documents, metadatas, ids = new_docs, new_metas, new_ids
+
+    if not documents:
+        return 0
     
     # Ingest in batches
     total_ingested = 0
