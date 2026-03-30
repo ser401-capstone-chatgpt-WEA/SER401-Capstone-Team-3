@@ -90,6 +90,21 @@ class CacheError(RAGServiceError):
         super().__init__(message, status_code=500)
 
 
+class IngestionError(RAGServiceError):
+    """
+    Raised when alert ingestion into the vector store fails.
+    
+    Examples:
+        - Duplicate document detection failure
+        - Embedding generation error during ingestion
+        - ChromaDB write failure
+        - Malformed alert data that cannot be indexed
+    """
+    
+    def __init__(self, message: str):
+        super().__init__(message, status_code=500)
+
+
 def rag_exception_to_http(exc: RAGServiceError) -> HTTPException:
     """
     Convert a RAGServiceError to an HTTPException.
