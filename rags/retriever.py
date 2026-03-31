@@ -5,6 +5,7 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 from chroma_setup import ChromaDBManager
+from rags.exceptions import RetrieverError
 
 # Configure logging to use absolute path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +55,9 @@ class AlertRetriever:
         
         Returns:
             List of dicts with keys: id, text, metadata, score
+            
+        Raises:
+            RetrieverError: If the vector database query fails
         """
         threshold = min_score if min_score is not None else self.min_score
 
@@ -85,4 +89,5 @@ class AlertRetriever:
             
         except Exception as e:
             logging.error(f"Retrieval error: {e}")
-            return []
+            raise RetrieverError(f"Vector database query failed: {str(e)}")
+
