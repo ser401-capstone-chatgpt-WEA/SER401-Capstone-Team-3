@@ -208,6 +208,20 @@ def fetch_and_save_alerts(
         timeout=timeout
     )
     
+    # Measure ingestion delays
+    now = datetime.now(timezone.utc)
+    for alert in data.get('alerts', []):
+        sent_str = alert.get('sent')
+        if sent_str:
+            try:
+                sent = datetime.fromisoformat(sent_str.replace('Z', '+00:00'))
+                delay = (now - sent).total_seconds()
+                logging.info(f"Alert {alert.get('id', 'unknown')} ingestion delay: {delay:.2f} seconds")
+                if delay > 60:
+                    logging.warning(f"Alert {alert.get('id', 'unknown')} exceeded 60 second ingestion threshold: {delay:.2f} seconds")
+            except Exception as e:
+                logging.error(f"Error parsing sent time for alert {alert.get('id', 'unknown')}: {e}")
+    
     # Save to file
     output_file = save_alerts_to_file(data, output_folder)
     
