@@ -14,6 +14,7 @@ Stop:
     pkill -f scheduler.py
 """
 
+import json
 import logging
 import subprocess
 import sys
@@ -41,6 +42,45 @@ def get_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def _get_status_path() -> Path:
+    return Path(__file__).resolve().parent / "pbs_warn_outputs" / "scheduler_status.json"
+
+
+def _load_scheduler_status() -> dict:
+    status_path = _get_status_path()
+    if not status_path.exists():
+        return {}
+    try:
+        return json.loads(status_path.read_text())
+    except Exception as exc:
+        logging.warning(f"[SCHEDULER] Failed to read scheduler status file: {exc}")
+        return {}
+
+
+def _write_scheduler_status(status_payload: dict) -> None:
+    status_path = _get_status_path()
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = status_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(status_payload, indent=2))
+    tmp_path.replace(status_path)
+
+
+def _update_job_status(job_name: str, status: str, start_time: float, error: str | None = None) -> None:
+    now_iso = get_timestamp()
+    duration_ms = int((datetime.now(timezone.utc).timestamp() - start_time) * 1000)
+    payload = _load_scheduler_status()
+    jobs = payload.get("jobs", {})
+    jobs[job_name] = {
+        "status": status,
+        "timestamp": now_iso,
+        "duration_ms": duration_ms,
+        "error": error
+    }
+    payload["jobs"] = jobs
+    payload["last_updated"] = now_iso
+    _write_scheduler_status(payload)
+
+
 def run_scraper():
     """
     Execute the PBS WARN API scraper.
@@ -52,6 +92,7 @@ def run_scraper():
     logging.info(f"[SCHEDULER] Starting scraper job at {get_timestamp()}")
     logging.info("="*80)
     
+    start_time = datetime.now(timezone.utc).timestamp()
     try:
         result = subprocess.run(
             ['python3', 'scrape_pbs_warn_api.py', '--generate-report'],
@@ -65,17 +106,22 @@ def run_scraper():
             logging.info("[SCHEDULER] Scraper completed successfully")
             if result.stdout:
                 logging.debug(f"[SCHEDULER] Scraper output: {result.stdout[:500]}")
+            _update_job_status("scraper", "success", start_time)
         else:
             logging.error(f"[SCHEDULER] Scraper failed with return code {result.returncode}")
             if result.stderr:
                 logging.error(f"[SCHEDULER] Scraper error: {result.stderr}")
+            _update_job_status("scraper", "error", start_time, result.stderr)
                 
     except subprocess.TimeoutExpired:
         logging.error("[SCHEDULER] Scraper timed out after 5 minutes")
+        _update_job_status("scraper", "error", start_time, "Timeout expired")
     except FileNotFoundError:
         logging.error("[SCHEDULER] scrape_pbs_warn_api.py not found - check working directory")
+        _update_job_status("scraper", "error", start_time, "scrape_pbs_warn_api.py not found")
     except Exception as e:
         logging.error(f"[SCHEDULER] Unexpected scraper error: {e}", exc_info=True)
+        _update_job_status("scraper", "error", start_time, str(e))
     finally:
         logging.info("="*80)
 
@@ -91,6 +137,7 @@ def run_rag_ingestion():
     logging.info(f"[SCHEDULER] Starting RAG ingestion job at {get_timestamp()}")
     logging.info("="*80)
     
+    start_time = datetime.now(timezone.utc).timestamp()
     try:
         result = subprocess.run(
             ['python3', '-m', 'rags.ingest_alerts'],
@@ -107,15 +154,19 @@ def run_rag_ingestion():
                 for line in result.stdout.split('\n'):
                     if 'Ingested' in line or 'documents' in line or 'files processed' in line:
                         logging.info(f"[SCHEDULER] {line.strip()}")
+            _update_job_status("ingestion", "success", start_time)
         else:
             logging.error(f"[SCHEDULER] RAG ingestion failed with return code {result.returncode}")
             if result.stderr:
                 logging.error(f"[SCHEDULER] Ingestion error: {result.stderr}")
+            _update_job_status("ingestion", "error", start_time, result.stderr)
                 
     except subprocess.TimeoutExpired:
         logging.error("[SCHEDULER] RAG ingestion timed out after 10 minutes")
+        _update_job_status("ingestion", "error", start_time, "Timeout expired")
     except Exception as e:
         logging.error(f"[SCHEDULER] Unexpected ingestion error: {e}", exc_info=True)
+        _update_job_status("ingestion", "error", start_time, str(e))
     finally:
         logging.info("="*80)
 
@@ -131,6 +182,7 @@ def run_cleanup():
     logging.info(f"[SCHEDULER] Starting cleanup job at {get_timestamp()}")
     logging.info("="*80)
     
+    start_time = datetime.now(timezone.utc).timestamp()
     try:
         result = subprocess.run(
             ['python3', '-m', 'rags.cleanup'],
@@ -147,15 +199,19 @@ def run_cleanup():
                 for line in result.stdout.split('\n'):
                     if 'removed' in line.lower() or 'expired' in line.lower() or 'Documents Remaining' in line:
                         logging.info(f"[SCHEDULER] {line.strip()}")
+            _update_job_status("cleanup", "success", start_time)
         else:
             logging.error(f"[SCHEDULER] Cleanup failed with return code {result.returncode}")
             if result.stderr:
                 logging.error(f"[SCHEDULER] Cleanup error: {result.stderr}")
+            _update_job_status("cleanup", "error", start_time, result.stderr)
                 
     except subprocess.TimeoutExpired:
         logging.error("[SCHEDULER] Cleanup timed out after 5 minutes")
+        _update_job_status("cleanup", "error", start_time, "Timeout expired")
     except Exception as e:
         logging.error(f"[SCHEDULER] Unexpected cleanup error: {e}", exc_info=True)
+        _update_job_status("cleanup", "error", start_time, str(e))
     finally:
         logging.info("="*80)
 

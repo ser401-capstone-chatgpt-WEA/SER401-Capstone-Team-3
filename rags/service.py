@@ -23,10 +23,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import logging
+import json
 import re
 import uuid
 import time
 from collections import deque
+from datetime import datetime, timezone
+from pathlib import Path
 
 from rags.retriever import AlertRetriever
 from rags.generator import ResponseGenerator
@@ -82,6 +85,37 @@ metrics = {
     "total_response_time_ms": 0.0,
     "service_start_time": time.time()
 }
+
+
+def _get_scheduler_status_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "pbs_warn_outputs" / "scheduler_status.json"
+
+
+def _load_scheduler_status() -> Dict[str, Any]:
+    status_path = _get_scheduler_status_path()
+    if not status_path.exists():
+        return {}
+    try:
+        return json.loads(status_path.read_text())
+    except Exception as exc:
+        logging.warning(f"Failed to read scheduler status file: {exc}")
+        return {}
+
+
+def _parse_iso_timestamp(timestamp: Optional[str]) -> Optional[datetime]:
+    if not timestamp:
+        return None
+    try:
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _time_since_seconds(timestamp: Optional[str]) -> Optional[int]:
+    parsed = _parse_iso_timestamp(timestamp)
+    if not parsed:
+        return None
+    return int((datetime.now(timezone.utc) - parsed).total_seconds())
 
 
 def get_cache_key(query: str, top_k: int, filters: Optional[Dict]) -> str:
@@ -695,7 +729,6 @@ async def health():
         
         # Check if cleanup is stale (more than 2 hours ago)
         try:
-            from datetime import datetime, timezone
             # Parse last cleanup timestamp
             cleanup_time_str = last_cleanup_result.get('timestamp', '').replace('Z', '+00:00')
             cleanup_time = datetime.fromisoformat(cleanup_time_str)
@@ -714,6 +747,12 @@ async def health():
             logging.error(f"Error checking cleanup staleness: {e}")
             cleanup_status = "unhealthy"
 
+    scheduler_status = _load_scheduler_status()
+    scheduler_jobs = scheduler_status.get("jobs", {})
+    scraper_job = scheduler_jobs.get("scraper", {})
+    ingestion_job = scheduler_jobs.get("ingestion", {})
+    cleanup_job = scheduler_jobs.get("cleanup", {})
+
     # Determine overall status
     overall_status = "healthy"
     if retriever_status != "healthy" or generator_status != "healthy":
@@ -730,7 +769,36 @@ async def health():
         "documents_indexed": stats['document_count'] if retriever_status == "healthy" else None,
         "collection_name": retriever.db.collection_name if retriever_status == "healthy" else None,
         "last_cleanup_timestamp": last_cleanup_timestamp,
-        "last_cleanup_metrics": last_cleanup_metrics
+        "last_cleanup_metrics": last_cleanup_metrics,
+        "last_scrape_timestamp": scraper_job.get("timestamp"),
+        "last_ingestion_timestamp": ingestion_job.get("timestamp"),
+        "last_scheduler_update": scheduler_status.get("last_updated"),
+        "scraper_status": scraper_job.get("status"),
+        "ingestion_status": ingestion_job.get("status"),
+        "scheduler_cleanup_status": cleanup_job.get("status"),
+        "time_since_last_scrape_seconds": _time_since_seconds(scraper_job.get("timestamp")),
+        "time_since_last_ingestion_seconds": _time_since_seconds(ingestion_job.get("timestamp")),
+        "time_since_last_scheduler_update_seconds": _time_since_seconds(scheduler_status.get("last_updated")),
+        "scheduler_jobs": {
+            "scraper": {
+                "status": scraper_job.get("status"),
+                "timestamp": scraper_job.get("timestamp"),
+                "duration_ms": scraper_job.get("duration_ms"),
+                "error": scraper_job.get("error")
+            },
+            "ingestion": {
+                "status": ingestion_job.get("status"),
+                "timestamp": ingestion_job.get("timestamp"),
+                "duration_ms": ingestion_job.get("duration_ms"),
+                "error": ingestion_job.get("error")
+            },
+            "cleanup": {
+                "status": cleanup_job.get("status"),
+                "timestamp": cleanup_job.get("timestamp"),
+                "duration_ms": cleanup_job.get("duration_ms"),
+                "error": cleanup_job.get("error")
+            }
+        }
     }
 
 def update_cleanup_metrics(cleanup_result: Dict[str, Any]) -> None:
