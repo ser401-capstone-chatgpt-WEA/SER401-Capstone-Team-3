@@ -21,6 +21,7 @@ Endpoints:
 
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import time
 
 from pydantic import BaseModel, Field
@@ -57,6 +58,16 @@ app = FastAPI(
     title="PBS WARN RAG Service",
     description="Retrieval-Augmented Generation service for PBS WARN emergency alerts",
     version="1.0.0"
+)
+
+# CORS configuration for Tailscale Funnel public access
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize components
