@@ -54,3 +54,23 @@ curl -X POST http://localhost:8000/query \
 # Run tests
 python rags/test_service.py
 ```
+
+## Health Monitoring
+
+Use the monitor script to check scraper freshness and the RAG service health endpoint.
+
+Basic usage:
+```shell
+python monitor.py
+```
+
+Customize thresholds and URL:
+```shell
+python monitor.py --health-url http://localhost:8000/health --max-age-minutes 40
+```
+
+JSON output for integrations:
+```shell
+python monitor.py --json
+```
+```
