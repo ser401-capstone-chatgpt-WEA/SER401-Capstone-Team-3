@@ -77,14 +77,14 @@ generator = ResponseGenerator()
 # In-memory query history (limited to the last 100 queries)
 query_history = deque(maxlen=100)
 
-# Rate limiting configuration
-RATE_LIMIT_REQUESTS = 60  # Max requests per window
-RATE_LIMIT_WINDOW = 60    # Window size in seconds
+# Rate limiting configuration (configurable via environment)
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))
+RATE_LIMIT_WINDOW = int(os.getenv("RATE_LIMIT_WINDOW", "60"))
 rate_limit_store: Dict[str, List[float]] = {}  # IP -> list of request timestamps
 
-# Query cache configuration
-CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
-CACHE_MAX_SIZE = 100  # Maximum number of cached queries
+# Query cache configuration (configurable via environment)
+CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))
+CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "100"))
 query_cache: Dict[str, Dict[str, Any]] = {}  # query_hash -> {response, timestamp}
 
 # Cleanup service tracking
