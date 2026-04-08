@@ -172,6 +172,14 @@ async def list_tools():
                 },
                 "required": ["query"]
             }
+        ),
+        Tool(
+            name="system_health_check",
+            description="Perform automated health checks on system components to monitor uptime and detect downtime.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -360,6 +368,40 @@ async def call_tool(name: str, arguments: dict):
                 
             except Exception as e:
                 return [TextContent(type="text", text=json.dumps({"success": False, "error": f"RAG Error: {str(e)}"}))]
+
+        elif name == "system_health_check":
+            health_status = {}
+            
+            # Check RAG components
+            try:
+                retriever, generator = get_rag_components()
+                health_status['rag_components'] = 'up'
+            except Exception as e:
+                health_status['rag_components'] = f'down: {str(e)}'
+            
+            # Check alert loading
+            try:
+                alerts = load_alerts()
+                health_status['alert_data'] = f'up: {len(alerts)} alerts loaded'
+            except Exception as e:
+                health_status['alert_data'] = f'down: {str(e)}'
+            
+            # Check API connectivity (mock for now)
+            health_status['api_connectivity'] = 'up'  # Could add actual check
+            
+            # Determine overall status
+            is_healthy = all('up' in str(status) for status in health_status.values())
+            if not is_healthy:
+                logging.warning(f"System health check detected issues: {health_status}")
+            
+            result = {
+                "success": True,
+                "tool": "system_health_check",
+                "healthy": is_healthy,
+                "components": health_status,
+                "timestamp": now_utc_iso()
+            }
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
         raise ValueError(f"Unknown tool: {name}")
 
