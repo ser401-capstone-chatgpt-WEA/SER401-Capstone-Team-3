@@ -25,8 +25,13 @@ ABBREVIATIONS: Dict[str, str] = {
     "pds": "particularly dangerous situation",
     "tor": "tornado",
     "ffw": "flash flood warning",
-    "ffw": "flash flood watch",
     "svs": "severe weather statement",
+    "wea": "wireless emergency alert",
+    "nws": "national weather service",
+    "ema": "emergency management agency",
+    "hazmat": "hazardous materials",
+    "amb": "amber alert",
+    "civ": "civil emergency",
 }
 
 # Common misspellings in alert-related queries
