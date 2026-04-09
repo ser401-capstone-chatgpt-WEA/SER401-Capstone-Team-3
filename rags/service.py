@@ -653,6 +653,41 @@ async def get_metrics():
     }
 
 
+@app.get("/scheduler/metrics")
+async def get_scheduler_metrics():
+    """
+    Retrieve scheduler job metrics.
+
+    Returns the latest scheduler status information, including per-job
+    status, timestamps, durations, and time-since fields derived from
+    scheduler_status.json.
+    """
+    scheduler_status = _load_scheduler_status()
+    scheduler_jobs = scheduler_status.get("jobs", {})
+    job_metrics = {}
+    error_jobs = []
+
+    for job_name, job_data in scheduler_jobs.items():
+        status = job_data.get("status")
+        if status == "error":
+            error_jobs.append(job_name)
+        job_metrics[job_name] = {
+            "status": status,
+            "timestamp": job_data.get("timestamp"),
+            "duration_ms": job_data.get("duration_ms"),
+            "error": job_data.get("error"),
+            "time_since_seconds": _time_since_seconds(job_data.get("timestamp"))
+        }
+
+    return {
+        "last_updated": scheduler_status.get("last_updated"),
+        "time_since_last_updated_seconds": _time_since_seconds(scheduler_status.get("last_updated")),
+        "job_count": len(scheduler_jobs),
+        "error_jobs": error_jobs,
+        "jobs": job_metrics
+    }
+
+
 @app.get("/health")
 async def health():
     """

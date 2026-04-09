@@ -73,4 +73,8 @@ JSON output for integrations:
 ```shell
 python monitor.py --json
 ```
+
+Scheduler metrics endpoint:
+```shell
+curl http://localhost:8000/scheduler/metrics | jq
 ```
