@@ -29,6 +29,9 @@ except ImportError as e:
 
 ALERT_FILE = os.getenv("ALERT_FILE", "./data/cleaned_alerts.json")
 
+# Downtime logging
+DOWNTIME_LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downtime.log")
+
 # -------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------
@@ -393,6 +396,9 @@ async def call_tool(name: str, arguments: dict):
             is_healthy = all('up' in str(status) for status in health_status.values())
             if not is_healthy:
                 logging.warning(f"System health check detected issues: {health_status}")
+                # Log downtime event
+                with open(DOWNTIME_LOG_FILE, 'a', encoding='utf-8') as f:
+                    f.write(f"{now_utc_iso()}: Downtime detected - {health_status}\n")
             
             result = {
                 "success": True,
