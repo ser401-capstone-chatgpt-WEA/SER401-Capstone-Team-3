@@ -8,6 +8,8 @@ import json
 import os
 import math
 import datetime
+import logging
+import time
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -176,6 +178,8 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
     """Handle tool calls from the MCP client."""
+    call_start = time.perf_counter()
+    logging.info(f"[MCP] Tool invoked: {name} | args: {json.dumps(arguments)[:200]} | {now_utc_iso()}")
     try:
         alerts = load_alerts()
 
