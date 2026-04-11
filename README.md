@@ -78,3 +78,15 @@ Scheduler metrics endpoint:
 ```shell
 curl http://localhost:8000/scheduler/metrics | jq
 ```
+
+## Scheduler Local Checks
+
+Run scheduler tests without production runtime:
+```shell
+pytest -q test_scheduler.py
+```
+
+Run only scraper/main-related checks:
+```shell
+pytest -q test_scheduler.py -k "run_scraper or main"
+```
