@@ -18,7 +18,7 @@ Endpoints:
 - GET /history: Retrieve past query history
 - GET /: API information and endpoint documentation
 """
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
@@ -48,6 +48,13 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# Ensure console logging for Docker environments
+if not any(isinstance(handler, logging.StreamHandler) for handler in logging.getLogger().handlers):
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logging.getLogger().addHandler(console_handler)
 
 app = FastAPI(
     title="PBS WARN RAG Service",
