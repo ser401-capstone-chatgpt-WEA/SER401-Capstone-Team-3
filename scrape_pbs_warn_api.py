@@ -36,6 +36,46 @@ DEFAULT_HEADERS = {
     "Accept": "application/json"
 }
 
+RETRY_MAX_ATTEMPTS = 5
+RETRY_BASE_BACKOFF_SECONDS = 1.0
+RETRY_MAX_BACKOFF_SECONDS = 60.0
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _parse_retry_after(header_value: str | None) -> float | None:
+    if not header_value:
+        return None
+    try:
+        return max(0.0, float(int(header_value)))
+    except ValueError:
+        try:
+            retry_dt = parsedate_to_datetime(header_value)
+            if retry_dt.tzinfo is None:
+                retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+            delta = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+            return max(0.0, delta)
+        except (TypeError, ValueError):
+            return None
+
+
+def should_retry(response: requests.Response | None, error: Exception | None) -> bool:
+    if response is not None:
+        return response.status_code in RETRYABLE_STATUS_CODES
+    if error is not None:
+        return isinstance(error, requests.exceptions.RequestException)
+    return False
+
+
+def compute_backoff(attempt: int, retry_after: float | None) -> float:
+    backoff = min(
+        RETRY_MAX_BACKOFF_SECONDS,
+        RETRY_BASE_BACKOFF_SECONDS * (2 ** (attempt - 1))
+    )
+    if retry_after is not None:
+        backoff = max(backoff, retry_after)
+    jitter = random.uniform(0, backoff * 0.1)
+    return backoff + jitter
+
 
 def fetch_alerts_api(
     status: str = "active",
@@ -57,39 +97,12 @@ def fetch_alerts_api(
     Returns:
         Dict containing the API response with alerts and metadata
     """
-    max_attempts = 5
-    base_backoff_seconds = 1.0
-    max_backoff_seconds = 60.0
-    retryable_statuses = {429, 500, 502, 503, 504}
-
-    def _parse_retry_after(header_value: str | None) -> float | None:
-        if not header_value:
-            return None
-        try:
-            return max(0.0, float(int(header_value)))
-        except ValueError:
-            try:
-                retry_dt = parsedate_to_datetime(header_value)
-                if retry_dt.tzinfo is None:
-                    retry_dt = retry_dt.replace(tzinfo=timezone.utc)
-                delta = (retry_dt - datetime.now(timezone.utc)).total_seconds()
-                return max(0.0, delta)
-            except (TypeError, ValueError):
-                return None
-
-    def _compute_delay(attempt: int, retry_after: float | None) -> float:
-        backoff = min(max_backoff_seconds, base_backoff_seconds * (2 ** (attempt - 1)))
-        if retry_after is not None:
-            backoff = max(backoff, retry_after)
-        jitter = random.uniform(0, backoff * 0.1)
-        return backoff + jitter
-
     def _request_with_retries(page_label: str, allow_404: bool = False) -> requests.Response:
         last_error: Exception | None = None
-        for attempt in range(1, max_attempts + 1):
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
                 logging.info(
-                    f"Attempt {attempt}/{max_attempts} fetching {page_label}: "
+                    f"Attempt {attempt}/{RETRY_MAX_ATTEMPTS} fetching {page_label}: "
                     f"{url}?{urlencode(params)}"
                 )
                 response = requests.get(
@@ -101,15 +114,15 @@ def fetch_alerts_api(
                 if response.status_code == 404 and allow_404:
                     logging.warning(f"{page_label} returned 404. No more pages to fetch.")
                     return response
-                if response.status_code in retryable_statuses:
+                if should_retry(response, None):
                     retry_after = _parse_retry_after(response.headers.get("Retry-After"))
-                    if attempt == max_attempts:
+                    if attempt == RETRY_MAX_ATTEMPTS:
                         logging.error(
                             f"Final attempt failed for {page_label} with status "
                             f"{response.status_code}."
                         )
                         response.raise_for_status()
-                    delay = _compute_delay(attempt, retry_after)
+                    delay = compute_backoff(attempt, retry_after)
                     logging.warning(
                         f"Attempt {attempt} for {page_label} returned status "
                         f"{response.status_code}. Retrying in {delay:.1f}s."
@@ -118,16 +131,16 @@ def fetch_alerts_api(
                     continue
                 response.raise_for_status()
                 logging.info(
-                    f"Attempt {attempt}/{max_attempts} succeeded for {page_label} "
+                    f"Attempt {attempt}/{RETRY_MAX_ATTEMPTS} succeeded for {page_label} "
                     f"with status {response.status_code}."
                 )
                 return response
             except requests.exceptions.RequestException as e:
                 last_error = e
-                if attempt == max_attempts:
+                if attempt == RETRY_MAX_ATTEMPTS or not should_retry(None, e):
                     logging.error(f"Final attempt failed for {page_label}: {e}")
                     raise
-                delay = _compute_delay(attempt, None)
+                delay = compute_backoff(attempt, None)
                 logging.warning(
                     f"Attempt {attempt} failed for {page_label}: {e}. "
                     f"Retrying in {delay:.1f}s."
@@ -135,7 +148,9 @@ def fetch_alerts_api(
                 time.sleep(delay)
         if last_error:
             raise last_error
-        raise RuntimeError(f"Failed to fetch {page_label} after {max_attempts} attempts.")
+        raise RuntimeError(
+            f"Failed to fetch {page_label} after {RETRY_MAX_ATTEMPTS} attempts."
+        )
 
     # Build query parameters
     params = {
