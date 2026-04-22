@@ -41,13 +41,23 @@ def compare_and_report_alerts(output_folder, current_alerts, diff_output_path=No
 def get_alert_changes(previous_alerts, current_alerts):
     """
     Compare two lists of alert dicts and classify alerts as new, updated, or cleared.
-    Alerts are matched by event/title and sender.
+    Alerts are matched by event/title and sender, with cap_identifier as fallback.
     """
     def get_alert_identity(alert):
-        event = alert.get('event', '').strip()
-        title = alert.get('title', '').strip()
-        sender = alert.get('sender', '').strip()
-        return (event or title, sender)
+        def _safe_text(value):
+            if value is None:
+                return ''
+            if isinstance(value, str):
+                return value.strip()
+            return str(value).strip()
+
+        event = _safe_text(alert.get('event'))
+        title = _safe_text(alert.get('title'))
+        sender = _safe_text(alert.get('sender'))
+        cap_identifier = _safe_text(alert.get('cap_identifier'))
+        primary = event or title or cap_identifier
+        secondary = sender or cap_identifier
+        return (primary, secondary)
 
     previous_alert_map = {get_alert_identity(alert): alert for alert in previous_alerts}
     current_alert_map = {get_alert_identity(alert): alert for alert in current_alerts}
