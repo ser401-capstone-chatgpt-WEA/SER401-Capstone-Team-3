@@ -1,0 +1,19 @@
+[
+    {
+        "Message_ID": "DEMO-TORNADO-PDS-777",
+        "Sender": "National Weather Service",
+        "Sent_Time": "2026-04-12T19:00:00Z",
+        "Status": "Actual",
+        "Message_Type": "Alert",
+        "Category": "Met",
+        "Severity": "Extreme",
+        "Certainty": "Observed",
+        "Urgency": "Immediate",
+        "Event": "Tornado Warning",
+        "Area_Description": "Phoenix, Arizona; Scottsdale, Arizona",
+        "Message_Text": "TORNADO WARNING in effect for Phoenix and Scottsdale, Arizona. Take cover immediately! A large, extremely dangerous tornado has been confirmed on the ground. This is a PARTICULARLY DANGEROUS SITUATION (PDS). Flying debris will be deadly to those caught without shelter.",
+        "latitude": 33.4484,
+        "longitude": -112.074,
+        "radius_km": 50
+    }
+]

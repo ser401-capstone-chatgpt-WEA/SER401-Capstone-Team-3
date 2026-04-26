@@ -1,0 +1,70 @@
+name: Deploy Scraper
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "dev" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_PERSONAL_AUTHKEY }}
+
+      - name: Debug Network & Tailscale
+        run: |
+          
+          NODE_KEY=$(tailscale status --json | jq -r .Self.PublicKey)
+          SIGN_CMD="tailscale lock sign $NODE_KEY"
+          echo "$SIGN_CMD"
+          
+          echo "Waiting up to 5 minutes for signing..."
+          for i in {1..60}; do
+            if tailscale lock status | grep -q "$NODE_KEY"; then
+              echo "Node signed!"
+              break
+            fi
+            sleep 5
+            HOST="${{ secrets.SSH_HOST }}"
+            if ping -c 1 -W 1 "$HOST" >/dev/null 2>&1; then
+               echo "Connectivity established!"
+               break
+            fi
+            sleep 5
+          done
+          
+          echo "Checking connectivity to host..."
+          HOST="${{ secrets.SSH_HOST }}"
+          
+          echo "Pinging $HOST..."
+          ping -c 3 "$HOST" || echo "Ping failed"
+          
+          echo "Checking SSH port 22..."
+          nc -zv -w 5 "$HOST" 22 || echo "Port 22 unreachable"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          envs: TS_AUTHKEY
+          script: |
+            cd ~/SER401-Capstone-Team-3
+            git fetch origin
+            git reset --hard origin/dev
+            
+            # Fetch the TS cert domain for the serve.json config substitution
+            TS_CERT_DOMAIN=$(tailscale status --json | jq -r .CertDomains[0])
+            export TS_CERT_DOMAIN=$TS_CERT_DOMAIN
+            
+            # Pass authkey and domain to docker
+            TS_AUTHKEY=$TS_AUTHKEY TS_CERT_DOMAIN=$TS_CERT_DOMAIN docker compose -f docker/docker-compose.yml up -d --build
